@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>ProcMon Rootless</string>
+		<key>footerText</key>
+		<string>Stability-first filesystem monitoring for rootless jailbreaks.</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Enable ProcMon</string>
+		<key>key</key>
+		<string>Enabled</string>
+		<key>default</key>
+		<true/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Enable HUD</string>
+		<key>key</key>
+		<string>HUDEnabled</string>
+		<key>default</key>
+		<true/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Live Notifications</string>
+		<key>key</key>
+		<string>LiveNotifications</string>
+		<key>default</key>
+		<false/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Plist Parsing</string>
+		<key>key</key>
+		<string>PlistParsing</string>
+		<key>default</key>
+		<true/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Ignored Paths (comma/newline)</string>
+		<key>key</key>
+		<string>IgnoredPathsString</string>
+		<key>default</key>
+		<string></string>
+		<key>placeholder</key>
+		<string>/var/mobile/Library/Caches, /private/var/tmp</string>
+	</dict>
+
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>Status</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSTitleValueCell</string>
+		<key>label</key>
+		<string>Daemon</string>
+		<key>get</key>
+		<string>readDaemonStatus:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSTitleValueCell</string>
+		<key>label</key>
+		<string>Monitoring</string>
+		<key>get</key>
+		<string>readMonitorStatus:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Refresh Status</string>
+		<key>action</key>
+		<string>refreshStatusTapped:</string>
+	</dict>
+
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>Actions</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Clear Logs</string>
+		<key>action</key>
+		<string>clearLogsTapped:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Restore HUD</string>
+		<key>action</key>
+		<string>restoreHUDTapped:</string>
+	</dict>
+</array>
+</plist>

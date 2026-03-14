@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+LABEL="com.procmonrootless.procmond"
+LAUNCHCTL="/bin/launchctl"
+
+if [ -x /var/jb/bin/launchctl ]; then
+    LAUNCHCTL="/var/jb/bin/launchctl"
+fi
+
+if ! [ -x "$LAUNCHCTL" ]; then
+    LAUNCHCTL="$(command -v launchctl || echo /bin/launchctl)"
+fi
+
+"$LAUNCHCTL" bootout system/$LABEL >/dev/null 2>&1 || true
+
+/usr/bin/killall -9 SpringBoard >/dev/null 2>&1 || true
+exit 0

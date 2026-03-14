@@ -1,0 +1,9 @@
+Package: com.procmonrootless.tool
+Name: ProcMon Rootless
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: ProcMon-like filesystem monitoring suite for rootless jailbreaks (daemon + HUD tweak + prefs + CLI).
+Maintainer: ProcMon Team
+Author: ProcMon Team
+Section: Utilities
+Depends: firmware (>= 15.0), preferenceloader, mobilesubstrate
