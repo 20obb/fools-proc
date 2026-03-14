@@ -334,16 +334,42 @@
 }
 
 - (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path {
-    if (eventType.length == 0 || [PMConfig isNoisyPathForDisplay:path]) {
+    if (eventType.length == 0 || path.length == 0) {
         return NO;
     }
 
     NSString *upperType = [eventType uppercaseString];
+    NSString *lowerPath = [path lowercaseString];
     if ([upperType containsString:@"OPEN"] || [upperType containsString:@"READ"] || [upperType containsString:@"ACCESS"] || [upperType containsString:@"CLOSE"]) {
         return NO;
     }
     if ([upperType isEqualToString:@"UNKNOWN"]) {
         return NO;
+    }
+
+    if ([PMConfig isNoisyPathForDisplay:path]) {
+        NSSet<NSString *> *allowOnNoisy = [NSSet setWithArray:@[
+            @"CREATE_FILE",
+            @"CREATE_DIR",
+            @"DELETE",
+            @"RENAME_MOVE",
+            @"PERMISSION_CHANGED",
+            @"PLIST_VALUE_CHANGED",
+            @"SERVICE_STARTED",
+            @"SERVICE_STOPPED",
+            @"PACKAGE_INSTALL",
+            @"PACKAGE_REMOVE"
+        ]];
+        if (![allowOnNoisy containsObject:upperType]) {
+            return NO;
+        }
+
+        if ([lowerPath hasSuffix:@".tmp"] || [lowerPath hasSuffix:@".temp"] || [lowerPath hasSuffix:@".lock"] ||
+            [lowerPath hasSuffix:@".db-wal"] || [lowerPath hasSuffix:@".db-shm"] ||
+            [lowerPath hasSuffix:@".sqlite-wal"] || [lowerPath hasSuffix:@".sqlite-shm"] ||
+            [lowerPath containsString:@"/tmp/"] || [lowerPath containsString:@"/private/var/tmp/"]) {
+            return NO;
+        }
     }
 
     return YES;

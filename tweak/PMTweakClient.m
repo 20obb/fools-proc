@@ -410,6 +410,9 @@ extern char **environ;
     }
     self.lastDaemonLaunchAttempt = now;
 
+    [PMConfig ensureRuntimeDirectories];
+    unlink([PMConfig socketPath].fileSystemRepresentation);
+
     NSString *label = @"system/com.procmonrootless.procmond";
     NSString *plistPath = @"/var/jb/Library/LaunchDaemons/com.procmonrootless.procmond.plist";
 
@@ -426,9 +429,8 @@ extern char **environ;
         [self spawnProcessAtPath:launchctlPath arguments:@[@"kickstart", @"-k", label]];
     }
 
-    // Fallback: if launchctl bootstrap is blocked, run daemon directly.
-    if (![[NSFileManager defaultManager] fileExistsAtPath:[PMConfig socketPath]] &&
-        [[NSFileManager defaultManager] isExecutableFileAtPath:@"/var/jb/usr/libexec/procmond"]) {
+    // Fallback: run daemon directly if launchctl actions are blocked in this context.
+    if ([[NSFileManager defaultManager] isExecutableFileAtPath:@"/var/jb/usr/libexec/procmond"]) {
         [self spawnProcessAtPath:@"/var/jb/usr/libexec/procmond" arguments:@[]];
     }
 }

@@ -105,11 +105,17 @@
 
 + (NSArray<NSString *> *)defaultDiscoveryRoots {
     return @[
+        @"/var/mobile",
+        @"/private/var/mobile",
         @"/var/mobile/Library",
         @"/var/mobile/Documents",
         @"/var/mobile/Containers/Data/Application",
         @"/var/mobile/Containers/Shared/AppGroup",
+        @"/private/var/mobile/Containers/Data/Application",
+        @"/private/var/mobile/Containers/Shared/AppGroup",
         @"/var/mobile/Media",
+        @"/var/jb",
+        @"/var/jb/var/mobile",
         @"/var/jb/var/mobile/Library",
         @"/var/jb/etc",
         @"/var/jb/var/lib/dpkg",
@@ -134,7 +140,7 @@
 }
 
 + (NSUInteger)maxWatcherCount {
-    return 1200;
+    return 3200;
 }
 
 + (NSUInteger)maxRecentEvents {

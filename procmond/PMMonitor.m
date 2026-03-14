@@ -21,7 +21,8 @@
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *pathToFD;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDate *> *lastEventTimeByPath;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDate *> *lastModifyEmitByPath;
-@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *directorySnapshots;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *> *directorySnapshots;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *> *polledDirectorySnapshots;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, id> *plistSnapshots;
 
 @property (nonatomic, assign) BOOL running;
@@ -41,6 +42,7 @@
         _lastEventTimeByPath = [NSMutableDictionary dictionary];
         _lastModifyEmitByPath = [NSMutableDictionary dictionary];
         _directorySnapshots = [NSMutableDictionary dictionary];
+        _polledDirectorySnapshots = [NSMutableDictionary dictionary];
         _plistSnapshots = [NSMutableDictionary dictionary];
         _running = NO;
         _stormDroppedCount = 0;
@@ -69,12 +71,14 @@
 
         self.kqueueFD = kqueue();
         if (self.kqueueFD < 0) {
-            return;
+            self.kqueueFD = -1;
         }
 
         self.running = YES;
         [self rebuildWatchers];
-        [self installKqueueReadSource];
+        if (self.kqueueFD >= 0) {
+            [self installKqueueReadSource];
+        }
         [self installRescanTimer];
     });
 }
@@ -150,9 +154,9 @@
 
     self.rescanTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
     dispatch_source_set_timer(self.rescanTimer,
-                              dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
-                              45 * NSEC_PER_SEC,
-                              5 * NSEC_PER_SEC);
+                              dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                              4 * NSEC_PER_SEC,
+                              1 * NSEC_PER_SEC);
 
     __weak typeof(self) weakSelf = self;
     dispatch_source_set_event_handler(self.rescanTimer, ^{
@@ -340,6 +344,7 @@
     }
 
     NSSet<NSString *> *targetPaths = [NSSet setWithArray:[self discoverWatchPaths]];
+    [self pollDiscoveredDirectories:targetPaths];
 
     NSMutableSet<NSString *> *currentPaths = [NSMutableSet setWithArray:self.pathToFD.allKeys];
     NSMutableSet<NSString *> *toRemove = [currentPaths mutableCopy];
@@ -357,6 +362,9 @@
 
     NSUInteger cap = [PMConfig maxWatcherCount];
     for (NSString *path in toAdd) {
+        if (self.kqueueFD < 0) {
+            break;
+        }
         if (self.pathToFD.count >= cap) {
             break;
         }
@@ -364,10 +372,42 @@
     }
 }
 
+- (void)pollDiscoveredDirectories:(NSSet<NSString *> *)targetPaths {
+    if (targetPaths.count == 0) {
+        return;
+    }
+
+    NSMutableSet<NSString *> *directoryTargets = [NSMutableSet set];
+    for (NSString *path in targetPaths) {
+        if ([self isDirectoryPath:path]) {
+            [directoryTargets addObject:path];
+        }
+    }
+
+    NSMutableSet<NSString *> *stale = [NSMutableSet setWithArray:self.polledDirectorySnapshots.allKeys];
+    [stale minusSet:directoryTargets];
+    for (NSString *path in stale) {
+        [self.polledDirectorySnapshots removeObjectForKey:path];
+    }
+
+    for (NSString *directoryPath in directoryTargets) {
+        NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *current = [self snapshotDirectoryForPath:directoryPath];
+        if (!current) {
+            continue;
+        }
+        NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *previous = self.polledDirectorySnapshots[directoryPath];
+        self.polledDirectorySnapshots[directoryPath] = current;
+        if (!previous) {
+            continue;
+        }
+        [self emitDirectoryDiffForPath:directoryPath previous:previous current:current];
+    }
+}
+
 - (NSArray<NSString *> *)discoverWatchPaths {
     NSUInteger cap = [PMConfig maxWatcherCount];
-    NSUInteger maxDepth = 3;
-    NSUInteger maxChildrenPerDirectory = 80;
+    NSUInteger maxDepth = 6;
+    NSUInteger maxChildrenPerDirectory = 220;
 
     NSMutableOrderedSet<NSString *> *discovered = [NSMutableOrderedSet orderedSet];
     NSMutableArray<NSDictionary *> *queue = [NSMutableArray array];
@@ -414,6 +454,7 @@
         if (![children isKindOfClass:[NSArray class]]) {
             continue;
         }
+        children = [children sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
 
         NSUInteger childCount = 0;
         for (NSString *childName in children) {
@@ -524,10 +565,11 @@
 
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSArray<NSString *> *children = [fileManager contentsOfDirectoryAtPath:parent error:nil];
+    children = [children sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
     NSUInteger added = 0;
 
     for (NSString *childName in children) {
-        if (added >= 8 || [self.pathToFD count] >= [PMConfig maxWatcherCount]) {
+        if (added >= 24 || [self.pathToFD count] >= [PMConfig maxWatcherCount]) {
             break;
         }
 
@@ -568,6 +610,36 @@
     return @(0); // regular/other file
 }
 
+- (NSDictionary<NSString *, NSNumber *> *)entryInfoForPath:(NSString *)path {
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st) != 0) {
+        return nil;
+    }
+
+    NSInteger kind = 0;
+    if (S_ISDIR(st.st_mode)) {
+        kind = 1;
+    } else if (S_ISLNK(st.st_mode)) {
+        kind = 2;
+    }
+
+    unsigned int permsOnly = (unsigned int)(st.st_mode & 07777);
+    unsigned long long inode = (unsigned long long)st.st_ino;
+    long long mtimeNs = ((long long)st.st_mtimespec.tv_sec * 1000000000LL) + (long long)st.st_mtimespec.tv_nsec;
+    long long ctimeNs = ((long long)st.st_ctimespec.tv_sec * 1000000000LL) + (long long)st.st_ctimespec.tv_nsec;
+
+    return @{
+        @"kind": @(kind),
+        @"mtime_ns": @(mtimeNs),
+        @"ctime_ns": @(ctimeNs),
+        @"size": @((unsigned long long)st.st_size),
+        @"mode": @(permsOnly),
+        @"uid": @((unsigned int)st.st_uid),
+        @"gid": @((unsigned int)st.st_gid),
+        @"inode": @(inode)
+    };
+}
+
 - (BOOL)shouldWatchFilePath:(NSString *)path {
     if (path.length == 0 || [self.config shouldIgnorePath:path]) {
         return NO;
@@ -594,6 +666,9 @@
         return YES;
     }
 
+    NSString *upperType = [eventType uppercaseString];
+    NSString *lowerPath = [path lowercaseString];
+
     if (![PMConfig isNoisyPathForDisplay:path]) {
         return NO;
     }
@@ -606,12 +681,29 @@
             @"PACKAGE_REMOVE",
             @"SERVICE_STARTED",
             @"SERVICE_STOPPED",
+            @"CREATE_FILE",
+            @"CREATE_DIR",
+            @"DELETE",
+            @"RENAME_MOVE",
+            @"PERMISSION_CHANGED",
             @"PLIST_VALUE_CHANGED",
             @"PLIST_FILE_REWRITTEN"
         ]];
     });
 
-    return ![allowOnNoisyPaths containsObject:eventType];
+    if (![allowOnNoisyPaths containsObject:upperType]) {
+        return YES;
+    }
+
+    // Keep known churny temp/cache artifacts suppressed even for create/delete.
+    if ([lowerPath hasSuffix:@".tmp"] || [lowerPath hasSuffix:@".temp"] || [lowerPath hasSuffix:@".lock"] ||
+        [lowerPath hasSuffix:@".db-wal"] || [lowerPath hasSuffix:@".db-shm"] ||
+        [lowerPath hasSuffix:@".sqlite-wal"] || [lowerPath hasSuffix:@".sqlite-shm"] ||
+        [lowerPath containsString:@"/tmp/"] || [lowerPath containsString:@"/private/var/tmp/"]) {
+        return YES;
+    }
+
+    return NO;
 }
 
 - (BOOL)shouldCoalesceModifyEventForPath:(NSString *)path {
@@ -624,7 +716,7 @@
     return NO;
 }
 
-- (NSDictionary<NSString *, NSNumber *> *)snapshotDirectoryForPath:(NSString *)directoryPath {
+- (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)snapshotDirectoryForPath:(NSString *)directoryPath {
     if (![self isDirectoryPath:directoryPath] || [self.config shouldIgnorePath:directoryPath]) {
         return nil;
     }
@@ -634,11 +726,12 @@
     if (![children isKindOfClass:[NSArray class]]) {
         return nil;
     }
+    children = [children sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
 
-    NSMutableDictionary<NSString *, NSNumber *> *snapshot = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *snapshot = [NSMutableDictionary dictionary];
     NSUInteger count = 0;
     for (NSString *child in children) {
-        if (count >= 200) {
+        if (count >= 4000) {
             break;
         }
         if (child.length == 0 || [child hasPrefix:@"."]) {
@@ -648,9 +741,9 @@
         if ([self.config shouldIgnorePath:childPath]) {
             continue;
         }
-        NSNumber *kind = [self fileKindForPath:childPath];
-        if (kind != nil) {
-            snapshot[child] = kind;
+        NSDictionary<NSString *, NSNumber *> *entry = [self entryInfoForPath:childPath];
+        if (entry != nil) {
+            snapshot[child] = entry;
             count += 1;
         }
     }
@@ -658,18 +751,9 @@
     return [snapshot copy];
 }
 
-- (void)emitDirectoryDiffEventsForPath:(NSString *)directoryPath {
-    NSDictionary<NSString *, NSNumber *> *previous = self.directorySnapshots[directoryPath];
-    NSDictionary<NSString *, NSNumber *> *current = [self snapshotDirectoryForPath:directoryPath];
-    if (!current) {
-        return;
-    }
-
-    self.directorySnapshots[directoryPath] = current;
-    if (!previous) {
-        return;
-    }
-
+- (void)emitDirectoryDiffForPath:(NSString *)directoryPath
+                        previous:(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)previous
+                         current:(NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)current {
     NSMutableSet<NSString *> *previousNames = [NSMutableSet setWithArray:previous.allKeys];
     NSMutableSet<NSString *> *currentNames = [NSMutableSet setWithArray:current.allKeys];
 
@@ -690,7 +774,8 @@
 
     for (NSString *name in added) {
         NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
-        NSInteger kind = [current[name] integerValue];
+        NSDictionary<NSString *, NSNumber *> *entry = current[name];
+        NSInteger kind = [entry[@"kind"] integerValue];
         NSString *createType = @"CREATE_FILE";
         if (kind == 1) {
             createType = @"CREATE_DIR";
@@ -702,6 +787,51 @@
         NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
         [self emitSyntheticEventType:@"DELETE" path:childPath oldPath:nil newPath:nil];
     }
+
+    NSMutableSet<NSString *> *common = [currentNames mutableCopy];
+    [common intersectSet:previousNames];
+
+    for (NSString *name in common) {
+        NSDictionary<NSString *, NSNumber *> *oldEntry = previous[name];
+        NSDictionary<NSString *, NSNumber *> *newEntry = current[name];
+        if (![oldEntry isKindOfClass:[NSDictionary class]] || ![newEntry isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+
+        NSInteger newKind = [newEntry[@"kind"] integerValue];
+        BOOL modeChanged = [oldEntry[@"mode"] unsignedIntValue] != [newEntry[@"mode"] unsignedIntValue];
+        BOOL ownerChanged = ([oldEntry[@"uid"] unsignedIntValue] != [newEntry[@"uid"] unsignedIntValue]) ||
+                            ([oldEntry[@"gid"] unsignedIntValue] != [newEntry[@"gid"] unsignedIntValue]);
+        BOOL inodeChanged = [oldEntry[@"inode"] unsignedLongLongValue] != [newEntry[@"inode"] unsignedLongLongValue];
+        BOOL sizeChanged = [oldEntry[@"size"] unsignedLongLongValue] != [newEntry[@"size"] unsignedLongLongValue];
+        BOOL mtimeChanged = [oldEntry[@"mtime_ns"] longLongValue] != [newEntry[@"mtime_ns"] longLongValue];
+        BOOL ctimeChanged = [oldEntry[@"ctime_ns"] longLongValue] != [newEntry[@"ctime_ns"] longLongValue];
+
+        NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
+        if (modeChanged || ownerChanged) {
+            [self emitSyntheticEventType:@"PERMISSION_CHANGED" path:childPath oldPath:nil newPath:nil];
+        }
+
+        // For files/symlinks, emit a single stable content-change signal.
+        if (newKind != 1 && (sizeChanged || mtimeChanged || inodeChanged || (!modeChanged && ctimeChanged))) {
+            [self emitSyntheticEventType:@"MODIFY_CONTENT" path:childPath oldPath:nil newPath:nil];
+        }
+    }
+}
+
+- (void)emitDirectoryDiffEventsForPath:(NSString *)directoryPath {
+    NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *previous = self.directorySnapshots[directoryPath];
+    NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *current = [self snapshotDirectoryForPath:directoryPath];
+    if (!current) {
+        return;
+    }
+
+    self.directorySnapshots[directoryPath] = current;
+    if (!previous) {
+        return;
+    }
+
+    [self emitDirectoryDiffForPath:directoryPath previous:previous current:current];
 }
 
 - (void)emitSyntheticEventType:(NSString *)eventType path:(NSString *)path oldPath:(NSString *)oldPath newPath:(NSString *)newPath {
@@ -856,6 +986,7 @@
     [self.lastEventTimeByPath removeAllObjects];
     [self.lastModifyEmitByPath removeAllObjects];
     [self.directorySnapshots removeAllObjects];
+    [self.polledDirectorySnapshots removeAllObjects];
     [self.plistSnapshots removeAllObjects];
     self.running = NO;
 }
