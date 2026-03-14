@@ -15,6 +15,7 @@
 @property (nonatomic, strong) PMIPCServer *ipcServer;
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong) dispatch_source_t configTimer;
+- (BOOL)shouldAcceptEvent:(PMEvent *)event;
 @end
 
 @implementation PMDaemon
@@ -31,6 +32,9 @@
     self.monitor.eventHandler = ^(PMEvent *event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
+            return;
+        }
+        if (![strongSelf shouldAcceptEvent:event]) {
             return;
         }
 
@@ -197,6 +201,9 @@
         }
 
         [self sanitizeHookEvent:event];
+        if (![self shouldAcceptEvent:event]) {
+            return [PMIPCProtocol okResponseForCommand:command payload:@{ @"accepted": @NO, @"filtered": @YES }];
+        }
         [self.eventStore appendEvent:event];
         [self.ipcServer broadcastEvent:event];
 
@@ -280,6 +287,13 @@
     NSMutableDictionary *metadata = [NSMutableDictionary dictionaryWithDictionary:event.extraMetadata ?: @{}];
     metadata[@"received_at"] = @([[NSDate date] timeIntervalSince1970]);
     event.extraMetadata = [metadata copy];
+}
+
+- (BOOL)shouldAcceptEvent:(PMEvent *)event {
+    if (!event || event.eventType.length == 0 || event.path.length == 0) {
+        return NO;
+    }
+    return [self.config shouldDisplayEventType:event.eventType path:event.path processName:event.processName];
 }
 
 @end

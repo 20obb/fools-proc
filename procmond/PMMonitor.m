@@ -662,48 +662,7 @@
 }
 
 - (BOOL)shouldSuppressEventType:(NSString *)eventType path:(NSString *)path {
-    if (eventType.length == 0 || path.length == 0) {
-        return YES;
-    }
-
-    NSString *upperType = [eventType uppercaseString];
-    NSString *lowerPath = [path lowercaseString];
-
-    if (![PMConfig isNoisyPathForDisplay:path]) {
-        return NO;
-    }
-
-    static NSSet<NSString *> *allowOnNoisyPaths = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        allowOnNoisyPaths = [NSSet setWithArray:@[
-            @"PACKAGE_INSTALL",
-            @"PACKAGE_REMOVE",
-            @"SERVICE_STARTED",
-            @"SERVICE_STOPPED",
-            @"CREATE_FILE",
-            @"CREATE_DIR",
-            @"DELETE",
-            @"RENAME_MOVE",
-            @"PERMISSION_CHANGED",
-            @"PLIST_VALUE_CHANGED",
-            @"PLIST_FILE_REWRITTEN"
-        ]];
-    });
-
-    if (![allowOnNoisyPaths containsObject:upperType]) {
-        return YES;
-    }
-
-    // Keep known churny temp/cache artifacts suppressed even for create/delete.
-    if ([lowerPath hasSuffix:@".tmp"] || [lowerPath hasSuffix:@".temp"] || [lowerPath hasSuffix:@".lock"] ||
-        [lowerPath hasSuffix:@".db-wal"] || [lowerPath hasSuffix:@".db-shm"] ||
-        [lowerPath hasSuffix:@".sqlite-wal"] || [lowerPath hasSuffix:@".sqlite-shm"] ||
-        [lowerPath containsString:@"/tmp/"] || [lowerPath containsString:@"/private/var/tmp/"]) {
-        return YES;
-    }
-
-    return NO;
+    return ![self.config shouldDisplayEventType:eventType path:path processName:nil];
 }
 
 - (BOOL)shouldCoalesceModifyEventForPath:(NSString *)path {

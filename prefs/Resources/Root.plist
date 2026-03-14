@@ -8,7 +8,7 @@
 		<key>label</key>
 		<string>ProcMon Rootless</string>
 		<key>footerText</key>
-		<string>Stability-first filesystem monitoring for rootless jailbreaks.</string>
+		<string>Live monitoring ecosystem controls and filtering inside Settings.</string>
 	</dict>
 	<dict>
 		<key>cell</key>
@@ -49,6 +49,146 @@
 		<string>PlistParsing</string>
 		<key>default</key>
 		<true/>
+	</dict>
+
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>Live Ecosystem</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSLinkListCell</string>
+		<key>label</key>
+		<string>Live Source</string>
+		<key>defaults</key>
+		<string>com.procmonrootless.settings</string>
+		<key>PostNotification</key>
+		<string>com.procmonrootless.settings/ReloadPrefs</string>
+		<key>key</key>
+		<string>LiveSource</string>
+		<key>default</key>
+		<string>daemon_socket</string>
+		<key>validTitles</key>
+		<array>
+			<string>Daemon Socket (Recommended)</string>
+			<string>JSON Log Fallback</string>
+		</array>
+		<key>validValues</key>
+		<array>
+			<string>daemon_socket</string>
+			<string>json_log</string>
+		</array>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Auto Reconnect Live</string>
+		<key>key</key>
+		<string>AutoReconnectLive</string>
+		<key>default</key>
+		<true/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Monitor Guard (Force Start)</string>
+		<key>key</key>
+		<string>MonitorGuard</string>
+		<key>default</key>
+		<true/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Include Noisy Paths</string>
+		<key>key</key>
+		<string>IncludeNoisyPaths</string>
+		<key>default</key>
+		<false/>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSSwitchCell</string>
+		<key>label</key>
+		<string>Comprehensive Mode</string>
+		<key>key</key>
+		<string>ComprehensiveMode</string>
+		<key>default</key>
+		<false/>
+	</dict>
+
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>Filtering</string>
+		<key>footerText</key>
+		<string>Applies to daemon logs and HUD display.</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Path Scope Prefix</string>
+		<key>key</key>
+		<string>PathScopePrefix</string>
+		<key>default</key>
+		<string></string>
+		<key>placeholder</key>
+		<string>/var/mobile or /var/jb</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Path Contains</string>
+		<key>key</key>
+		<string>PathContains</string>
+		<key>default</key>
+		<string></string>
+		<key>placeholder</key>
+		<string>preferences or launchdaemons</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Path Regex</string>
+		<key>key</key>
+		<string>PathRegex</string>
+		<key>default</key>
+		<string></string>
+		<key>placeholder</key>
+		<string>.*\.plist$</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Process Contains</string>
+		<key>key</key>
+		<string>ProcessContains</string>
+		<key>default</key>
+		<string></string>
+		<key>placeholder</key>
+		<string>filza or apt</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSEditTextCell</string>
+		<key>label</key>
+		<string>Allowed Event Types</string>
+		<key>key</key>
+		<string>AllowedEventTypesString</string>
+		<key>default</key>
+		<string>CREATE_FILE, CREATE_DIR, DELETE, RENAME_MOVE, MODIFY_CONTENT, PLIST_VALUE_CHANGED, PERMISSION_CHANGED, SERVICE_STARTED, SERVICE_STOPPED, PACKAGE_INSTALL, PACKAGE_REMOVE</string>
+		<key>placeholder</key>
+		<string>Comma/newline list of event types</string>
 	</dict>
 	<dict>
 		<key>cell</key>
@@ -98,7 +238,39 @@
 		<key>cell</key>
 		<string>PSGroupCell</string>
 		<key>label</key>
-		<string>Actions</string>
+		<string>Runtime Actions</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Start Monitor</string>
+		<key>action</key>
+		<string>startMonitorTapped:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Restart Daemon</string>
+		<key>action</key>
+		<string>restartDaemonTapped:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Show Recent Events</string>
+		<key>action</key>
+		<string>recentEventsTapped:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Export Logs</string>
+		<key>action</key>
+		<string>exportLogsTapped:</string>
 	</dict>
 	<dict>
 		<key>cell</key>
@@ -115,6 +287,29 @@
 		<string>Restore HUD</string>
 		<key>action</key>
 		<string>restoreHUDTapped:</string>
+	</dict>
+
+	<dict>
+		<key>cell</key>
+		<string>PSGroupCell</string>
+		<key>label</key>
+		<string>Filter Presets</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Apply Balanced Preset</string>
+		<key>action</key>
+		<string>applyBalancedPresetTapped:</string>
+	</dict>
+	<dict>
+		<key>cell</key>
+		<string>PSButtonCell</string>
+		<key>label</key>
+		<string>Apply Comprehensive Preset</string>
+		<key>action</key>
+		<string>applyComprehensivePresetTapped:</string>
 	</dict>
 </array>
 </plist>

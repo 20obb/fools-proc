@@ -86,8 +86,10 @@ extern char **environ;
             [self connectIfNeeded];
             return;
         }
-        // Force monitor to stay active, then fetch current status.
-        [self sendCommandLocked:@{ @"command": @"start" }];
+        PMConfig *config = [PMConfig loadCurrentConfig];
+        if (config.monitorGuard) {
+            [self sendCommandLocked:@{ @"command": @"start" }];
+        }
         [self sendCommandLocked:@{ @"command": @"status" }];
     });
 }
@@ -175,7 +177,10 @@ extern char **environ;
     [self notifyStatusChangedLocked];
 
     [self sendCommandLocked:@{ @"command": @"subscribe_live" }];
-    [self sendCommandLocked:@{ @"command": @"start" }];
+    PMConfig *config = [PMConfig loadCurrentConfig];
+    if (config.monitorGuard) {
+        [self sendCommandLocked:@{ @"command": @"start" }];
+    }
     [self sendCommandLocked:@{ @"command": @"status" }];
 }
 
@@ -287,6 +292,10 @@ extern char **environ;
         if (data) {
             self.monitoringRunning = [data[@"monitoring_running"] respondsToSelector:@selector(boolValue)] ? [data[@"monitoring_running"] boolValue] : NO;
             self.procmonEnabled = [data[@"procmon_enabled"] respondsToSelector:@selector(boolValue)] ? [data[@"procmon_enabled"] boolValue] : YES;
+            PMConfig *config = [PMConfig loadCurrentConfig];
+            if (config.monitorGuard && !self.monitoringRunning) {
+                [self sendCommandLocked:@{ @"command": @"start" }];
+            }
             [self notifyStatusChangedLocked];
         }
     }
@@ -342,6 +351,11 @@ extern char **environ;
 
 - (void)scheduleReconnectLocked {
     if (!self.running || self.reconnectTimer) {
+        return;
+    }
+
+    PMConfig *config = [PMConfig loadCurrentConfig];
+    if (!config.autoReconnectLive) {
         return;
     }
 

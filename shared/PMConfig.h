@@ -9,7 +9,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL liveNotificationsEnabled;
 @property (nonatomic, assign) BOOL plistParsingEnabled;
 @property (nonatomic, assign) BOOL hudHidden;
+@property (nonatomic, assign) BOOL includeNoisyPaths;
+@property (nonatomic, assign) BOOL comprehensiveMode;
+@property (nonatomic, assign) BOOL autoReconnectLive;
+@property (nonatomic, assign) BOOL monitorGuard;
+@property (nonatomic, copy) NSString *liveSource;
+@property (nonatomic, copy) NSString *pathScopePrefix;
+@property (nonatomic, copy) NSString *pathContains;
+@property (nonatomic, copy) NSString *pathRegex;
+@property (nonatomic, copy) NSString *processContains;
 @property (nonatomic, copy) NSArray<NSString *> *ignoredPaths;
+@property (nonatomic, copy) NSArray<NSString *> *allowedEventTypes;
 
 + (instancetype)loadCurrentConfig;
 
@@ -34,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)isNoisyPathForDisplay:(NSString *)path;
 
 - (BOOL)shouldIgnorePath:(NSString *)path;
+- (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path processName:(nullable NSString *)processName;
 
 @end
 

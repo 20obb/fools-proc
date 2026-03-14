@@ -1,6 +1,45 @@
 #import "PMConfig.h"
 #import <sys/stat.h>
 
+static NSString *PMTrimmedString(id rawValue) {
+    if (![rawValue isKindOfClass:[NSString class]]) {
+        return @"";
+    }
+    return [(NSString *)rawValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+static NSArray<NSString *> *PMStringListFromValue(id rawValue, BOOL uppercase) {
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+    if ([rawValue isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)rawValue) {
+            NSString *trimmed = PMTrimmedString(value);
+            if (trimmed.length == 0) {
+                continue;
+            }
+            [result addObject:uppercase ? [trimmed uppercaseString] : trimmed];
+        }
+    } else if ([rawValue isKindOfClass:[NSString class]]) {
+        NSArray<NSString *> *parts = [(NSString *)rawValue componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@",\n"]];
+        for (NSString *part in parts) {
+            NSString *trimmed = PMTrimmedString(part);
+            if (trimmed.length == 0) {
+                continue;
+            }
+            [result addObject:uppercase ? [trimmed uppercaseString] : trimmed];
+        }
+    }
+
+    if (result.count == 0) {
+        return @[];
+    }
+
+    NSMutableOrderedSet *dedup = [NSMutableOrderedSet orderedSet];
+    for (NSString *item in result) {
+        [dedup addObject:item];
+    }
+    return dedup.array;
+}
+
 @implementation PMConfig
 
 + (instancetype)loadCurrentConfig {
@@ -10,11 +49,33 @@
     config.liveNotificationsEnabled = NO;
     config.plistParsingEnabled = YES;
     config.hudHidden = NO;
+    config.includeNoisyPaths = NO;
+    config.comprehensiveMode = NO;
+    config.autoReconnectLive = YES;
+    config.monitorGuard = YES;
+    config.liveSource = @"daemon_socket";
+    config.pathScopePrefix = @"";
+    config.pathContains = @"";
+    config.pathRegex = @"";
+    config.processContains = @"";
     config.ignoredPaths = @[
         @"/var/mobile/Library/Caches",
         @"/var/mobile/Library/Logs/CrashReporter",
         @"/var/jb/var/cache",
         @"/private/var/tmp"
+    ];
+    config.allowedEventTypes = @[
+        @"CREATE_FILE",
+        @"CREATE_DIR",
+        @"DELETE",
+        @"RENAME_MOVE",
+        @"MODIFY_CONTENT",
+        @"PLIST_VALUE_CHANGED",
+        @"PERMISSION_CHANGED",
+        @"SERVICE_STARTED",
+        @"SERVICE_STOPPED",
+        @"PACKAGE_INSTALL",
+        @"PACKAGE_REMOVE"
     ];
 
     NSDictionary *preferences = [NSDictionary dictionaryWithContentsOfFile:[self preferencesFilePath]];
@@ -47,29 +108,60 @@
         config.hudHidden = [hudHidden boolValue];
     }
 
+    id includeNoisy = preferences[@"IncludeNoisyPaths"];
+    if ([includeNoisy respondsToSelector:@selector(boolValue)]) {
+        config.includeNoisyPaths = [includeNoisy boolValue];
+    }
+
+    id comprehensiveMode = preferences[@"ComprehensiveMode"];
+    if ([comprehensiveMode respondsToSelector:@selector(boolValue)]) {
+        config.comprehensiveMode = [comprehensiveMode boolValue];
+    }
+
+    id autoReconnectLive = preferences[@"AutoReconnectLive"];
+    if ([autoReconnectLive respondsToSelector:@selector(boolValue)]) {
+        config.autoReconnectLive = [autoReconnectLive boolValue];
+    }
+
+    id monitorGuard = preferences[@"MonitorGuard"];
+    if ([monitorGuard respondsToSelector:@selector(boolValue)]) {
+        config.monitorGuard = [monitorGuard boolValue];
+    }
+
+    NSString *liveSource = PMTrimmedString(preferences[@"LiveSource"]);
+    if (liveSource.length > 0) {
+        config.liveSource = liveSource;
+    }
+
+    NSString *pathScopePrefix = PMTrimmedString(preferences[@"PathScopePrefix"]);
+    if (pathScopePrefix.length > 0) {
+        config.pathScopePrefix = pathScopePrefix;
+    }
+
+    NSString *pathContains = PMTrimmedString(preferences[@"PathContains"]);
+    if (pathContains.length > 0) {
+        config.pathContains = [pathContains lowercaseString];
+    }
+
+    NSString *pathRegex = PMTrimmedString(preferences[@"PathRegex"]);
+    if (pathRegex.length > 0) {
+        config.pathRegex = pathRegex;
+    }
+
+    NSString *processContains = PMTrimmedString(preferences[@"ProcessContains"]);
+    if (processContains.length > 0) {
+        config.processContains = [processContains lowercaseString];
+    }
+
     id ignored = preferences[@"IgnoredPaths"];
-    if ([ignored isKindOfClass:[NSArray class]]) {
-        NSMutableArray<NSString *> *clean = [NSMutableArray array];
-        for (id value in (NSArray *)ignored) {
-            if ([value isKindOfClass:[NSString class]] && [value length] > 0) {
-                [clean addObject:value];
-            }
-        }
-        if (clean.count > 0) {
-            config.ignoredPaths = [clean copy];
-        }
-    } else if ([ignored isKindOfClass:[NSString class]]) {
-        NSArray *components = [(NSString *)ignored componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@",\n"]];
-        NSMutableArray<NSString *> *clean = [NSMutableArray array];
-        for (NSString *component in components) {
-            NSString *trimmed = [component stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (trimmed.length > 0) {
-                [clean addObject:trimmed];
-            }
-        }
-        if (clean.count > 0) {
-            config.ignoredPaths = [clean copy];
-        }
+    NSArray<NSString *> *ignoredList = PMStringListFromValue(ignored, NO);
+    if (ignoredList.count > 0) {
+        config.ignoredPaths = ignoredList;
+    }
+
+    NSArray<NSString *> *allowedTypes = PMStringListFromValue(preferences[@"AllowedEventTypes"], YES);
+    if (allowedTypes.count > 0) {
+        config.allowedEventTypes = allowedTypes;
     }
 
     return config;
@@ -210,6 +302,88 @@
     }
 
     return NO;
+}
+
+- (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path processName:(NSString *)processName {
+    if (eventType.length == 0 || path.length == 0) {
+        return NO;
+    }
+    if ([self shouldIgnorePath:path]) {
+        return NO;
+    }
+
+    NSString *upperType = [eventType uppercaseString];
+    NSString *lowerPath = [path lowercaseString];
+    NSString *lowerProc = [PMTrimmedString(processName) lowercaseString];
+
+    if (!self.comprehensiveMode && self.allowedEventTypes.count > 0 && ![self.allowedEventTypes containsObject:upperType]) {
+        return NO;
+    }
+
+    if (self.pathScopePrefix.length > 0 && ![path hasPrefix:self.pathScopePrefix]) {
+        return NO;
+    }
+
+    if (self.pathContains.length > 0 && ![lowerPath containsString:self.pathContains]) {
+        return NO;
+    }
+
+    if (self.pathRegex.length > 0) {
+        NSError *regexError = nil;
+        NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:self.pathRegex options:NSRegularExpressionCaseInsensitive error:&regexError];
+        if (!regexError && regex) {
+            NSRange fullRange = NSMakeRange(0, path.length);
+            if ([regex firstMatchInString:path options:0 range:fullRange] == nil) {
+                return NO;
+            }
+        }
+    }
+
+    if (self.processContains.length > 0) {
+        if (lowerProc.length > 0 && ![lowerProc isEqualToString:@"unknown"] && ![lowerProc containsString:self.processContains]) {
+            return NO;
+        }
+    }
+
+    if (self.includeNoisyPaths) {
+        return YES;
+    }
+
+    if (![PMConfig isNoisyPathForDisplay:path]) {
+        return YES;
+    }
+
+    static NSSet<NSString *> *allowOnNoisyPaths = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowOnNoisyPaths = [NSSet setWithArray:@[
+            @"PACKAGE_INSTALL",
+            @"PACKAGE_REMOVE",
+            @"SERVICE_STARTED",
+            @"SERVICE_STOPPED",
+            @"CREATE_FILE",
+            @"CREATE_DIR",
+            @"DELETE",
+            @"RENAME_MOVE",
+            @"PERMISSION_CHANGED",
+            @"PLIST_VALUE_CHANGED",
+            @"PLIST_FILE_REWRITTEN"
+        ]];
+    });
+
+    if (![allowOnNoisyPaths containsObject:upperType]) {
+        return NO;
+    }
+
+    // Always suppress temp/cache churn unless user explicitly broadens ignored paths.
+    if ([lowerPath hasSuffix:@".tmp"] || [lowerPath hasSuffix:@".temp"] || [lowerPath hasSuffix:@".lock"] ||
+        [lowerPath hasSuffix:@".db-wal"] || [lowerPath hasSuffix:@".db-shm"] ||
+        [lowerPath hasSuffix:@".sqlite-wal"] || [lowerPath hasSuffix:@".sqlite-shm"] ||
+        [lowerPath containsString:@"/tmp/"] || [lowerPath containsString:@"/private/var/tmp/"]) {
+        return NO;
+    }
+
+    return YES;
 }
 
 @end

@@ -17,6 +17,7 @@
 @property (nonatomic, assign) BOOL monitoringRunning;
 @property (nonatomic, assign) BOOL daemonConnected;
 @property (nonatomic, assign) int notifyToken;
+@property (nonatomic, strong) PMConfig *activeConfig;
 @end
 
 @implementation PMHUDController
@@ -145,6 +146,7 @@
 }
 
 - (void)applyConfig:(PMConfig *)config {
+    self.activeConfig = config;
     self.procmonEnabled = config.enabled;
 
     if (!config.enabled || !config.hudEnabled || config.hudHidden) {
@@ -307,7 +309,8 @@
 
         NSString *eventType = [eventDictionary[@"event_type"] isKindOfClass:[NSString class]] ? eventDictionary[@"event_type"] : @"evt";
         NSString *path = [eventDictionary[@"path"] isKindOfClass:[NSString class]] ? eventDictionary[@"path"] : @"(null)";
-        if (![self shouldDisplayEventType:eventType path:path]) {
+        NSString *processName = [eventDictionary[@"process_name"] isKindOfClass:[NSString class]] ? eventDictionary[@"process_name"] : @"";
+        if (![self shouldDisplayEventType:eventType path:path processName:processName]) {
             return;
         }
         if ([self shouldThrottleHUDLineForEventType:eventType path:path]) {
@@ -333,13 +336,12 @@
     });
 }
 
-- (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path {
+- (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path processName:(NSString *)processName {
     if (eventType.length == 0 || path.length == 0) {
         return NO;
     }
 
     NSString *upperType = [eventType uppercaseString];
-    NSString *lowerPath = [path lowercaseString];
     if ([upperType containsString:@"OPEN"] || [upperType containsString:@"READ"] || [upperType containsString:@"ACCESS"] || [upperType containsString:@"CLOSE"]) {
         return NO;
     }
@@ -347,32 +349,8 @@
         return NO;
     }
 
-    if ([PMConfig isNoisyPathForDisplay:path]) {
-        NSSet<NSString *> *allowOnNoisy = [NSSet setWithArray:@[
-            @"CREATE_FILE",
-            @"CREATE_DIR",
-            @"DELETE",
-            @"RENAME_MOVE",
-            @"PERMISSION_CHANGED",
-            @"PLIST_VALUE_CHANGED",
-            @"SERVICE_STARTED",
-            @"SERVICE_STOPPED",
-            @"PACKAGE_INSTALL",
-            @"PACKAGE_REMOVE"
-        ]];
-        if (![allowOnNoisy containsObject:upperType]) {
-            return NO;
-        }
-
-        if ([lowerPath hasSuffix:@".tmp"] || [lowerPath hasSuffix:@".temp"] || [lowerPath hasSuffix:@".lock"] ||
-            [lowerPath hasSuffix:@".db-wal"] || [lowerPath hasSuffix:@".db-shm"] ||
-            [lowerPath hasSuffix:@".sqlite-wal"] || [lowerPath hasSuffix:@".sqlite-shm"] ||
-            [lowerPath containsString:@"/tmp/"] || [lowerPath containsString:@"/private/var/tmp/"]) {
-            return NO;
-        }
-    }
-
-    return YES;
+    PMConfig *config = self.activeConfig ?: [PMConfig loadCurrentConfig];
+    return [config shouldDisplayEventType:eventType path:path processName:processName];
 }
 
 - (BOOL)shouldThrottleHUDLineForEventType:(NSString *)eventType path:(NSString *)path {
