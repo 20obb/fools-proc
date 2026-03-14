@@ -20,6 +20,10 @@ static BOOL PMShouldReportPath(NSString *path) {
         return NO;
     }
 
+    if ([PMConfig isNoisyPathForDisplay:path]) {
+        return NO;
+    }
+
     return ![config shouldIgnorePath:path];
 }
 
@@ -44,7 +48,7 @@ static BOOL PMShouldReportPath(NSString *path) {
             @"bytes": @(data.length),
             @"has_attributes": @(attr.count > 0)
         };
-        [PMHookReporter reportEventType:@"create" path:path oldPath:nil newPath:nil extra:extra];
+        [PMHookReporter reportEventType:@"CREATE_FILE" path:path oldPath:nil newPath:nil extra:extra];
     }
     return result;
 }
@@ -52,7 +56,7 @@ static BOOL PMShouldReportPath(NSString *path) {
 - (BOOL)removeItemAtPath:(NSString *)path error:(NSError **)error {
     BOOL result = %orig;
     if (result && PMShouldReportPath(path)) {
-        [PMHookReporter reportEventType:@"delete" path:path oldPath:nil newPath:nil extra:@{ @"op": @"remove" }];
+        [PMHookReporter reportEventType:@"DELETE" path:path oldPath:nil newPath:nil extra:@{ @"op": @"remove" }];
     }
     return result;
 }
@@ -63,7 +67,7 @@ static BOOL PMShouldReportPath(NSString *path) {
         NSDictionary *extra = @{
             @"op": @"move"
         };
-        [PMHookReporter reportEventType:@"rename" path:dstPath ?: srcPath oldPath:srcPath newPath:dstPath extra:extra];
+        [PMHookReporter reportEventType:@"RENAME_MOVE" path:dstPath ?: srcPath oldPath:srcPath newPath:dstPath extra:extra];
     }
     return result;
 }
@@ -75,7 +79,7 @@ static BOOL PMShouldReportPath(NSString *path) {
             @"op": @"set_attributes",
             @"keys": attributes.allKeys ?: @[]
         };
-        [PMHookReporter reportEventType:@"attrib" path:path oldPath:nil newPath:nil extra:extra];
+        [PMHookReporter reportEventType:@"PERMISSION_CHANGED" path:path oldPath:nil newPath:nil extra:extra];
     }
     return result;
 }
@@ -87,7 +91,7 @@ static BOOL PMShouldReportPath(NSString *path) {
             @"op": @"mkdir",
             @"intermediate": @(createIntermediates)
         };
-        [PMHookReporter reportEventType:@"mkdir" path:path oldPath:nil newPath:nil extra:extra];
+        [PMHookReporter reportEventType:@"CREATE_DIR" path:path oldPath:nil newPath:nil extra:extra];
     }
     return result;
 }

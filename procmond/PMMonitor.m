@@ -20,6 +20,8 @@
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *fdToPath;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *pathToFD;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDate *> *lastEventTimeByPath;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDate *> *lastModifyEmitByPath;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *directorySnapshots;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, id> *plistSnapshots;
 
 @property (nonatomic, assign) BOOL running;
@@ -37,6 +39,8 @@
         _fdToPath = [NSMutableDictionary dictionary];
         _pathToFD = [NSMutableDictionary dictionary];
         _lastEventTimeByPath = [NSMutableDictionary dictionary];
+        _lastModifyEmitByPath = [NSMutableDictionary dictionary];
+        _directorySnapshots = [NSMutableDictionary dictionary];
         _plistSnapshots = [NSMutableDictionary dictionary];
         _running = NO;
         _stormDroppedCount = 0;
@@ -187,6 +191,10 @@
             continue;
         }
 
+        if ([self isDirectoryPath:path] && (kev.fflags & (NOTE_WRITE | NOTE_RENAME | NOTE_EXTEND))) {
+            [self emitDirectoryDiffEventsForPath:path];
+        }
+
         PMEvent *event = [self eventFromPath:path flags:kev.fflags];
         if (event && self.eventHandler) {
             self.eventHandler(event);
@@ -227,7 +235,24 @@
         return nil;
     }
 
+    BOOL isDirectory = [self isDirectoryPath:path];
     NSString *eventType = [self eventTypeForFlags:flags path:path];
+    if (eventType.length == 0) {
+        return nil;
+    }
+
+    if (isDirectory && (flags & (NOTE_WRITE | NOTE_EXTEND)) && [eventType isEqualToString:@"ATTRIB_CHANGED"]) {
+        return nil;
+    }
+
+    if ([eventType isEqualToString:@"MODIFY_CONTENT"] && [self shouldCoalesceModifyEventForPath:path]) {
+        return nil;
+    }
+
+    if ([PMConfig isNoisyPathForDisplay:path] && [eventType isEqualToString:@"MODIFY_CONTENT"]) {
+        return nil;
+    }
+
     PMEvent *event = [PMEvent eventWithType:eventType path:path];
     event.source = @"watcher";
 
@@ -242,12 +267,17 @@
 
     NSMutableDictionary *metadata = [NSMutableDictionary dictionary];
     metadata[@"fflags"] = @(flags);
-    metadata[@"is_directory"] = @([self isDirectoryPath:path]);
+    metadata[@"is_directory"] = @(isDirectory);
 
     if (self.config.plistParsingEnabled && [[path lowercaseString] hasSuffix:@".plist"]) {
         NSString *summary = [self plistDiffSummaryForPath:path eventType:eventType];
         if (summary.length > 0) {
             event.plistDiffSummary = summary;
+            if ([summary containsString:@"changed"] || [summary containsString:@"diff added="] || [summary containsString:@"array count"]) {
+                event.eventType = @"PLIST_VALUE_CHANGED";
+            } else if ([summary containsString:@"baseline captured"] || [summary containsString:@"parse failed"] || [summary containsString:@"read failed"]) {
+                event.eventType = @"PLIST_FILE_REWRITTEN";
+            }
         }
     }
 
@@ -260,32 +290,48 @@
 
 - (NSString *)eventTypeForFlags:(uint32_t)flags path:(NSString *)path {
     BOOL servicePath = ([path containsString:@"/LaunchDaemons/"] || [path containsString:@"/launchd.conf"] || [path containsString:@"/xpc/"]);
+    BOOL packagePath = ([path containsString:@"/var/lib/dpkg/"] || [path containsString:@"/var/jb/var/lib/dpkg/"] || [path containsString:@"/apt/"]);
 
     if (flags & NOTE_DELETE) {
-        return servicePath ? @"service_config_delete" : @"delete";
+        if (packagePath) {
+            return @"PACKAGE_REMOVE";
+        }
+        if (servicePath) {
+            return @"SERVICE_STOPPED";
+        }
+        return @"DELETE";
     }
     if (flags & NOTE_RENAME) {
-        return servicePath ? @"service_config_rename" : @"rename";
+        return @"RENAME_MOVE";
     }
     if (flags & NOTE_ATTRIB) {
-        return servicePath ? @"service_config_attrib" : @"attrib";
-    }
-    if (flags & NOTE_EXTEND) {
-        return servicePath ? @"service_config_change" : @"extend";
-    }
-    if (flags & NOTE_REVOKE) {
-        return @"revoke";
+        return @"PERMISSION_CHANGED";
     }
     if (flags & NOTE_LINK) {
-        return @"link";
+        return @"HARDLINK_CREATED";
+    }
+    if (flags & NOTE_REVOKE) {
+        return @"ATTRIB_CHANGED";
+    }
+    if (flags & NOTE_EXTEND) {
+        if (packagePath) {
+            return @"PACKAGE_INSTALL";
+        }
+        if (servicePath) {
+            return @"SERVICE_STARTED";
+        }
+        return @"MODIFY_CONTENT";
     }
     if (flags & NOTE_WRITE) {
-        if (servicePath) {
-            return @"service_runtime_activity";
+        if (packagePath) {
+            return @"PACKAGE_INSTALL";
         }
-        return [self isDirectoryPath:path] ? @"dir_modify" : @"write";
+        if (servicePath) {
+            return @"SERVICE_STARTED";
+        }
+        return [self isDirectoryPath:path] ? @"ATTRIB_CHANGED" : @"MODIFY_CONTENT";
     }
-    return @"unknown";
+    return @"ATTRIB_CHANGED";
 }
 
 - (void)rebuildWatchers {
@@ -348,7 +394,14 @@
         }
 
         BOOL isDirectory = NO;
-        if (![fileManager fileExistsAtPath:path isDirectory:&isDirectory] || !isDirectory) {
+        if (![fileManager fileExistsAtPath:path isDirectory:&isDirectory]) {
+            continue;
+        }
+
+        if (!isDirectory) {
+            if ([self shouldWatchFilePath:path]) {
+                [discovered addObject:path];
+            }
             continue;
         }
 
@@ -374,6 +427,14 @@
 
             NSString *childPath = [path stringByAppendingPathComponent:childName];
             BOOL childIsDir = NO;
+            if ([fileManager fileExistsAtPath:childPath isDirectory:&childIsDir] && ![self.config shouldIgnorePath:childPath]) {
+                if (!childIsDir && [self shouldWatchFilePath:childPath]) {
+                    [discovered addObject:childPath];
+                    childCount += 1;
+                    continue;
+                }
+            }
+
             if ([fileManager fileExistsAtPath:childPath isDirectory:&childIsDir] && childIsDir && ![self.config shouldIgnorePath:childPath]) {
                 [queue addObject:@{ @"path": childPath, @"depth": @(depth + 1) }];
                 childCount += 1;
@@ -412,6 +473,14 @@
     NSNumber *fdNumber = @(fd);
     self.fdToPath[fdNumber] = normalizedPath;
     self.pathToFD[normalizedPath] = fdNumber;
+
+    if ([self isDirectoryPath:normalizedPath]) {
+        NSDictionary *snapshot = [self snapshotDirectoryForPath:normalizedPath];
+        if (snapshot) {
+            self.directorySnapshots[normalizedPath] = snapshot;
+        }
+    }
+
     return YES;
 }
 
@@ -429,6 +498,8 @@
     if (path) {
         [self.pathToFD removeObjectForKey:path];
         [self.lastEventTimeByPath removeObjectForKey:path];
+        [self.lastModifyEmitByPath removeObjectForKey:path];
+        [self.directorySnapshots removeObjectForKey:path];
     }
     [self.fdToPath removeObjectForKey:fdNumber];
 
@@ -462,8 +533,15 @@
 
         NSString *childPath = [parent stringByAppendingPathComponent:childName];
         BOOL isDir = NO;
-        if ([fileManager fileExistsAtPath:childPath isDirectory:&isDir] && isDir && ![self.config shouldIgnorePath:childPath] && !self.pathToFD[childPath]) {
-            if ([self registerWatchForPath:childPath]) {
+        if ([fileManager fileExistsAtPath:childPath isDirectory:&isDir] && ![self.config shouldIgnorePath:childPath] && !self.pathToFD[childPath]) {
+            if (!isDir && [self shouldWatchFilePath:childPath]) {
+                if ([self registerWatchForPath:childPath]) {
+                    added += 1;
+                }
+                continue;
+            }
+
+            if (isDir && [self registerWatchForPath:childPath]) {
                 added += 1;
             }
         }
@@ -475,9 +553,157 @@
     return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir;
 }
 
+- (BOOL)shouldWatchFilePath:(NSString *)path {
+    if (path.length == 0 || [self.config shouldIgnorePath:path]) {
+        return NO;
+    }
+
+    NSString *lower = [path lowercaseString];
+    if ([lower hasSuffix:@".plist"]) {
+        return YES;
+    }
+    if ([lower hasSuffix:@".conf"] && [lower containsString:@"/launch"]) {
+        return YES;
+    }
+    if ([lower containsString:@"/var/lib/dpkg/status"] || [lower containsString:@"/var/jb/var/lib/dpkg/status"]) {
+        return YES;
+    }
+    if ([lower containsString:@"/var/lib/dpkg/info/"] || [lower containsString:@"/var/jb/var/lib/dpkg/info/"]) {
+        return YES;
+    }
+    return NO;
+}
+
+- (BOOL)shouldCoalesceModifyEventForPath:(NSString *)path {
+    NSDate *now = [NSDate date];
+    NSDate *previous = self.lastModifyEmitByPath[path];
+    if (previous && [now timeIntervalSinceDate:previous] < 1.2) {
+        return YES;
+    }
+    self.lastModifyEmitByPath[path] = now;
+    return NO;
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)snapshotDirectoryForPath:(NSString *)directoryPath {
+    if (![self isDirectoryPath:directoryPath] || [self.config shouldIgnorePath:directoryPath]) {
+        return nil;
+    }
+
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSArray<NSString *> *children = [fileManager contentsOfDirectoryAtPath:directoryPath error:nil];
+    if (![children isKindOfClass:[NSArray class]]) {
+        return nil;
+    }
+
+    NSMutableDictionary<NSString *, NSNumber *> *snapshot = [NSMutableDictionary dictionary];
+    NSUInteger count = 0;
+    for (NSString *child in children) {
+        if (count >= 200) {
+            break;
+        }
+        if (child.length == 0 || [child hasPrefix:@"."]) {
+            continue;
+        }
+        NSString *childPath = [directoryPath stringByAppendingPathComponent:child];
+        if ([self.config shouldIgnorePath:childPath]) {
+            continue;
+        }
+        BOOL isDir = NO;
+        if ([fileManager fileExistsAtPath:childPath isDirectory:&isDir]) {
+            snapshot[child] = @(isDir);
+            count += 1;
+        }
+    }
+
+    return [snapshot copy];
+}
+
+- (void)emitDirectoryDiffEventsForPath:(NSString *)directoryPath {
+    NSDictionary<NSString *, NSNumber *> *previous = self.directorySnapshots[directoryPath];
+    NSDictionary<NSString *, NSNumber *> *current = [self snapshotDirectoryForPath:directoryPath];
+    if (!current) {
+        return;
+    }
+
+    self.directorySnapshots[directoryPath] = current;
+    if (!previous) {
+        return;
+    }
+
+    NSMutableSet<NSString *> *previousNames = [NSMutableSet setWithArray:previous.allKeys];
+    NSMutableSet<NSString *> *currentNames = [NSMutableSet setWithArray:current.allKeys];
+
+    NSMutableSet<NSString *> *added = [currentNames mutableCopy];
+    [added minusSet:previousNames];
+
+    NSMutableSet<NSString *> *removed = [previousNames mutableCopy];
+    [removed minusSet:currentNames];
+
+    if (added.count == 1 && removed.count == 1) {
+        NSString *newName = added.anyObject;
+        NSString *oldName = removed.anyObject;
+        NSString *newPath = [directoryPath stringByAppendingPathComponent:newName];
+        NSString *oldPath = [directoryPath stringByAppendingPathComponent:oldName];
+        [self emitSyntheticEventType:@"RENAME_MOVE" path:newPath oldPath:oldPath newPath:newPath];
+        return;
+    }
+
+    for (NSString *name in added) {
+        NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
+        BOOL isDir = [current[name] boolValue];
+        [self emitSyntheticEventType:(isDir ? @"CREATE_DIR" : @"CREATE_FILE") path:childPath oldPath:nil newPath:nil];
+    }
+
+    for (NSString *name in removed) {
+        NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
+        [self emitSyntheticEventType:@"DELETE" path:childPath oldPath:nil newPath:nil];
+    }
+}
+
+- (void)emitSyntheticEventType:(NSString *)eventType path:(NSString *)path oldPath:(NSString *)oldPath newPath:(NSString *)newPath {
+    if (eventType.length == 0 || path.length == 0 || [self.config shouldIgnorePath:path]) {
+        return;
+    }
+    if ([PMConfig isNoisyPathForDisplay:path] &&
+        ([eventType isEqualToString:@"MODIFY_CONTENT"] || [eventType isEqualToString:@"ATTRIB_CHANGED"])) {
+        return;
+    }
+
+    PMEvent *event = [PMEvent eventWithType:eventType path:path];
+    event.source = @"watcher";
+    event.oldPath = oldPath;
+    event.newPath = newPath;
+
+    struct stat statInfo;
+    if (lstat(path.fileSystemRepresentation, &statInfo) == 0) {
+        event.uid = statInfo.st_uid;
+        event.gid = statInfo.st_gid;
+        event.mode = statInfo.st_mode;
+        event.inode = statInfo.st_ino;
+        event.size = statInfo.st_size;
+    }
+
+    if (self.config.plistParsingEnabled && [[path lowercaseString] hasSuffix:@".plist"] &&
+        ([eventType isEqualToString:@"MODIFY_CONTENT"] || [eventType isEqualToString:@"CREATE_FILE"])) {
+        NSString *summary = [self plistDiffSummaryForPath:path eventType:eventType];
+        if (summary.length > 0) {
+            event.plistDiffSummary = summary;
+            if ([summary containsString:@"changed"] || [summary containsString:@"diff added="] || [summary containsString:@"array count"]) {
+                event.eventType = @"PLIST_VALUE_CHANGED";
+            } else if ([summary containsString:@"baseline captured"] || [summary containsString:@"parse failed"] || [summary containsString:@"read failed"]) {
+                event.eventType = @"PLIST_FILE_REWRITTEN";
+            }
+        }
+    }
+
+    if (self.eventHandler) {
+        self.eventHandler(event);
+    }
+}
+
 - (NSString *)plistDiffSummaryForPath:(NSString *)path eventType:(NSString *)eventType {
     @try {
-        if ([eventType isEqualToString:@"delete"]) {
+        if ([[eventType uppercaseString] isEqualToString:@"DELETE"]) {
             [self.plistSnapshots removeObjectForKey:path];
             return @"plist deleted";
         }
@@ -585,6 +811,8 @@
     [self.fdToPath removeAllObjects];
     [self.pathToFD removeAllObjects];
     [self.lastEventTimeByPath removeAllObjects];
+    [self.lastModifyEmitByPath removeAllObjects];
+    [self.directorySnapshots removeAllObjects];
     [self.plistSnapshots removeAllObjects];
     self.running = NO;
 }

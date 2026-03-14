@@ -31,6 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSUInteger)maxIPCLineBytes;
 
 + (void)ensureRuntimeDirectories;
++ (BOOL)isNoisyPathForDisplay:(NSString *)path;
 
 - (BOOL)shouldIgnorePath:(NSString *)path;
 

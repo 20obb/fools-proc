@@ -58,17 +58,25 @@
 
     [self installConfigTimer];
 
-    PMEvent *startup = [PMEvent eventWithType:@"daemon_start" path:@"/var/jb/usr/libexec/procmond"];
+    PMEvent *startup = [PMEvent eventWithType:@"SERVICE_STARTED" path:@"/var/jb/usr/libexec/procmond"];
     startup.source = @"daemon";
     startup.pid = getpid();
     startup.processName = @"procmond";
-    startup.extraMetadata = @{ @"monitor_started": @([self.monitor isRunning]) };
+    startup.extraMetadata = @{ @"service_name": @"procmond", @"monitor_started": @([self.monitor isRunning]) };
     [self.eventStore appendEvent:startup];
 
     return YES;
 }
 
 - (void)stop {
+    PMEvent *shutdown = [PMEvent eventWithType:@"SERVICE_STOPPED" path:@"/var/jb/usr/libexec/procmond"];
+    shutdown.source = @"daemon";
+    shutdown.pid = getpid();
+    shutdown.processName = @"procmond";
+    shutdown.extraMetadata = @{ @"service_name": @"procmond" };
+    [self.eventStore appendEvent:shutdown];
+    [self.ipcServer broadcastEvent:shutdown];
+
     if (self.configTimer) {
         dispatch_source_cancel(self.configTimer);
         self.configTimer = nil;
@@ -261,7 +269,7 @@
     }
 
     if (event.eventType.length == 0) {
-        event.eventType = @"hook_event";
+        event.eventType = @"ATTRIB_CHANGED";
     }
 
     if (event.processName.length == 0) {

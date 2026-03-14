@@ -305,6 +305,9 @@
 
         NSString *eventType = [eventDictionary[@"event_type"] isKindOfClass:[NSString class]] ? eventDictionary[@"event_type"] : @"evt";
         NSString *path = [eventDictionary[@"path"] isKindOfClass:[NSString class]] ? eventDictionary[@"path"] : @"(null)";
+        if (![self shouldDisplayEventType:eventType path:path]) {
+            return;
+        }
         NSString *source = [eventDictionary[@"source"] isKindOfClass:[NSString class]] ? eventDictionary[@"source"] : @"src";
         NSNumber *timestamp = [eventDictionary[@"timestamp"] isKindOfClass:[NSNumber class]] ? eventDictionary[@"timestamp"] : nil;
         NSDate *date = timestamp ? [NSDate dateWithTimeIntervalSince1970:[timestamp doubleValue]] : [NSDate date];
@@ -323,6 +326,32 @@
                                  monitoring:self.monitoringRunning
                                   connected:self.daemonConnected];
     });
+}
+
+- (BOOL)shouldDisplayEventType:(NSString *)eventType path:(NSString *)path {
+    if (eventType.length == 0 || [PMConfig isNoisyPathForDisplay:path]) {
+        return NO;
+    }
+
+    static NSSet<NSString *> *primaryEvents = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        primaryEvents = [NSSet setWithArray:@[
+            @"CREATE_FILE",
+            @"CREATE_DIR",
+            @"DELETE",
+            @"RENAME_MOVE",
+            @"MODIFY_CONTENT",
+            @"PLIST_VALUE_CHANGED",
+            @"PERMISSION_CHANGED",
+            @"SERVICE_STARTED",
+            @"SERVICE_STOPPED",
+            @"PACKAGE_INSTALL",
+            @"PACKAGE_REMOVE"
+        ]];
+    });
+
+    return [primaryEvents containsObject:eventType];
 }
 
 @end

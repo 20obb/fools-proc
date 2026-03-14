@@ -110,18 +110,19 @@
     NSDate *safeTimestamp = timestamp ?: [NSDate date];
     UIColor *typeColor = [self colorForEventType:eventType];
     NSString *timeString = [self formattedTime:safeTimestamp];
+    NSString *displayType = [self displayTypeForEventType:eventType];
     NSString *trimmedPath = path;
     if (trimmedPath.length > 72) {
         trimmedPath = [NSString stringWithFormat:@"...%@", [trimmedPath substringFromIndex:trimmedPath.length - 69]];
     }
 
-    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@ %@", timeString, source ?: @"watcher", eventType ?: @"event", trimmedPath];
+    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@ %@", timeString, source ?: @"watcher", displayType ?: @"event", trimmedPath];
     NSMutableAttributedString *attributed = [[NSMutableAttributedString alloc] initWithString:line attributes:@{
         NSForegroundColorAttributeName: [UIColor colorWithWhite:0.9 alpha:1.0],
         NSFontAttributeName: [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular]
     }];
 
-    NSRange typeRange = [line rangeOfString:eventType ?: @""];
+    NSRange typeRange = [line rangeOfString:displayType ?: @""];
     if (typeRange.location != NSNotFound && typeRange.length > 0) {
         [attributed addAttributes:@{
             NSForegroundColorAttributeName: typeColor,
@@ -142,6 +143,18 @@
         }
     }
     self.eventsView.attributedText = rendered;
+}
+
+- (NSString *)displayTypeForEventType:(NSString *)eventType {
+    if (eventType.length == 0) {
+        return @"EVENT";
+    }
+
+    if ([eventType isEqualToString:@"RENAME_MOVE"]) {
+        return @"RENAME/MOVE";
+    }
+
+    return eventType;
 }
 
 - (void)clearEvents {
@@ -180,11 +193,17 @@
     if ([type containsString:@"attrib"] || [type containsString:@"chmod"] || [type containsString:@"chown"]) {
         return [UIColor colorWithRed:0.95 green:0.9 blue:0.42 alpha:1.0];
     }
+    if ([type containsString:@"permission"]) {
+        return [UIColor colorWithRed:0.95 green:0.9 blue:0.42 alpha:1.0];
+    }
     if ([type containsString:@"plist"]) {
         return [UIColor colorWithRed:0.65 green:0.6 blue:0.96 alpha:1.0];
     }
     if ([type containsString:@"service"] || [type containsString:@"process"]) {
         return [UIColor colorWithRed:0.45 green:0.82 blue:0.96 alpha:1.0];
+    }
+    if ([type containsString:@"package"]) {
+        return [UIColor colorWithRed:0.86 green:0.83 blue:0.34 alpha:1.0];
     }
     return [UIColor colorWithRed:0.58 green:0.86 blue:0.95 alpha:1.0];
 }

@@ -10,3 +10,9 @@ SUBPROJECTS += prefs
 SUBPROJECTS += cli
 
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+after-stage::
+	mkdir -p $(THEOS_STAGING_DIR)/DEBIAN
+	cp -f debian/postinst $(THEOS_STAGING_DIR)/DEBIAN/postinst
+	cp -f debian/prerm $(THEOS_STAGING_DIR)/DEBIAN/prerm
+	chmod 755 $(THEOS_STAGING_DIR)/DEBIAN/postinst $(THEOS_STAGING_DIR)/DEBIAN/prerm

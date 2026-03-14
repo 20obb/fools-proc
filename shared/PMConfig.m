@@ -112,6 +112,8 @@
         @"/var/mobile/Media",
         @"/var/jb/var/mobile/Library",
         @"/var/jb/etc",
+        @"/var/jb/var/lib/dpkg",
+        @"/var/lib/dpkg",
         @"/var/jb/Library/LaunchDaemons",
         @"/Library/LaunchDaemons",
         @"/System/Library/LaunchDaemons"
@@ -125,6 +127,7 @@
         @"/var/mobile/Library/SMS",
         @"/var/mobile/Library/Mail",
         @"/var/mobile/Library/Accounts",
+        @"/var/jb/var/lib/dpkg",
         @"/var/db",
         @"/etc"
     ];
@@ -159,6 +162,30 @@
     chmod(runDir.fileSystemRepresentation, 0777);
     chmod(logDir.fileSystemRepresentation, 0777);
     chmod(exportDir.fileSystemRepresentation, 0777);
+}
+
++ (BOOL)isNoisyPathForDisplay:(NSString *)path {
+    if (path.length == 0) {
+        return YES;
+    }
+
+    NSString *lower = [path lowercaseString];
+    if ([lower hasSuffix:@".db-wal"] || [lower hasSuffix:@".db-shm"] || [lower hasSuffix:@".sqlite-wal"] || [lower hasSuffix:@".sqlite-shm"]) {
+        return YES;
+    }
+    if ([lower hasSuffix:@".tmp"] || [lower hasSuffix:@".temp"] || [lower hasSuffix:@".lock"]) {
+        return YES;
+    }
+    if ([lower containsString:@"/tmp/"] || [lower containsString:@"/private/var/tmp/"]) {
+        return YES;
+    }
+    if ([lower containsString:@"/analytics"] || [lower containsString:@"/logs/"]) {
+        return YES;
+    }
+    if ([lower containsString:@"/caches/"]) {
+        return YES;
+    }
+    return NO;
 }
 
 - (BOOL)shouldIgnorePath:(NSString *)path {
