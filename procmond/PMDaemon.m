@@ -15,7 +15,9 @@
 @property (nonatomic, strong) PMIPCServer *ipcServer;
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong) dispatch_source_t configTimer;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *recentActorByPath;
 - (BOOL)shouldAcceptEvent:(PMEvent *)event;
+- (void)applyAttributionToEvent:(PMEvent *)event;
 @end
 
 @implementation PMDaemon
@@ -24,6 +26,7 @@
     self.queue = dispatch_queue_create("com.procmonrootless.daemon", DISPATCH_QUEUE_SERIAL);
     self.config = [PMConfig loadCurrentConfig];
     [PMConfig ensureRuntimeDirectories];
+    self.recentActorByPath = [NSMutableDictionary dictionary];
 
     self.eventStore = [[PMEventStore alloc] initWithConfig:self.config];
     self.monitor = [[PMMonitor alloc] initWithConfig:self.config];
@@ -34,6 +37,7 @@
         if (!strongSelf) {
             return;
         }
+        [strongSelf applyAttributionToEvent:event];
         if (![strongSelf shouldAcceptEvent:event]) {
             return;
         }
@@ -201,6 +205,7 @@
         }
 
         [self sanitizeHookEvent:event];
+        [self applyAttributionToEvent:event];
         if (![self shouldAcceptEvent:event]) {
             return [PMIPCProtocol okResponseForCommand:command payload:@{ @"accepted": @NO, @"filtered": @YES }];
         }
@@ -224,12 +229,16 @@
         @"procmon_enabled": @(self.config.enabled),
         @"hud_enabled": @(self.config.hudEnabled),
         @"plist_parsing": @(self.config.plistParsingEnabled),
+        @"comprehensive_mode": @(self.config.comprehensiveMode),
+        @"include_noisy_paths": @(self.config.includeNoisyPaths),
+        @"live_source": self.config.liveSource ?: @"daemon_socket",
         @"monitoring_running": @([self.monitor isRunning]),
         @"paused_by_command": @NO,
         @"always_on": @YES,
         @"watcher_count": monitorStatus[@"watcher_count"] ?: @0,
         @"storm_dropped": monitorStatus[@"storm_dropped"] ?: @0,
         @"recent_count": @([self.eventStore recentCount]),
+        @"allowed_event_types_count": @(self.config.allowedEventTypes.count),
         @"clients_connected": @([self.ipcServer connectedClientCount]),
         @"live_subscribers": @([self.ipcServer subscribedClientCount]),
         @"socket_path": [PMConfig socketPath],
@@ -294,6 +303,92 @@
         return NO;
     }
     return [self.config shouldDisplayEventType:event.eventType path:event.path processName:event.processName];
+}
+
+- (void)applyAttributionToEvent:(PMEvent *)event {
+    if (!event || event.path.length == 0) {
+        return;
+    }
+
+    NSDate *now = event.timestamp ?: [NSDate date];
+    NSTimeInterval nowTs = [now timeIntervalSince1970];
+    NSString *source = [event.source lowercaseString];
+    BOOL hasActor = (event.pid > 0 && event.processName.length > 0 && ![event.processName isEqualToString:@"unknown"]);
+
+    @synchronized (self) {
+        // Record process actor from hook events for near-future watcher correlation.
+        if ([source isEqualToString:@"hook"] && hasActor) {
+            NSDictionary *actor = @{
+                @"timestamp": @(nowTs),
+                @"pid": @(event.pid),
+                @"process_name": event.processName ?: @"unknown",
+                @"uid": @(event.uid),
+                @"gid": @(event.gid),
+                @"source": event.source ?: @"hook"
+            };
+
+            self.recentActorByPath[event.path] = actor;
+
+            if (event.newPath.length > 0) {
+                self.recentActorByPath[event.newPath] = actor;
+            }
+            if (event.oldPath.length > 0) {
+                self.recentActorByPath[event.oldPath] = actor;
+            }
+
+            NSString *parent = [event.path stringByDeletingLastPathComponent];
+            if (parent.length > 1) {
+                self.recentActorByPath[parent] = actor;
+            }
+        }
+
+        // Fill watcher events with a best-effort actor when missing.
+        if ([source isEqualToString:@"watcher"] && !hasActor) {
+            NSDictionary *candidate = self.recentActorByPath[event.path];
+            BOOL fromParent = NO;
+            if (![candidate isKindOfClass:[NSDictionary class]]) {
+                NSString *parent = [event.path stringByDeletingLastPathComponent];
+                candidate = self.recentActorByPath[parent];
+                fromParent = YES;
+            }
+
+            NSTimeInterval candidateTs = [candidate[@"timestamp"] respondsToSelector:@selector(doubleValue)] ? [candidate[@"timestamp"] doubleValue] : 0;
+            if (candidate && (nowTs - candidateTs) >= 0 && (nowTs - candidateTs) <= 2.8) {
+                int pid = [candidate[@"pid"] respondsToSelector:@selector(intValue)] ? [candidate[@"pid"] intValue] : -1;
+                NSString *proc = [candidate[@"process_name"] isKindOfClass:[NSString class]] ? candidate[@"process_name"] : @"unknown";
+                if (pid > 0) {
+                    event.pid = pid;
+                }
+                if (proc.length > 0) {
+                    event.processName = proc;
+                }
+                if ([candidate[@"uid"] respondsToSelector:@selector(unsignedIntValue)]) {
+                    event.uid = (uid_t)[candidate[@"uid"] unsignedIntValue];
+                }
+                if ([candidate[@"gid"] respondsToSelector:@selector(unsignedIntValue)]) {
+                    event.gid = (gid_t)[candidate[@"gid"] unsignedIntValue];
+                }
+
+                NSMutableDictionary *meta = [NSMutableDictionary dictionaryWithDictionary:event.extraMetadata ?: @{}];
+                meta[@"attribution"] = @"inferred_from_hook";
+                meta[@"attribution_scope"] = fromParent ? @"parent_path" : @"exact_path";
+                meta[@"attribution_age_ms"] = @((NSInteger)((nowTs - candidateTs) * 1000.0));
+                event.extraMetadata = [meta copy];
+            }
+        }
+
+        // Prune actor cache to keep memory bounded.
+        if (self.recentActorByPath.count > 2048) {
+            NSArray<NSString *> *keys = [self.recentActorByPath allKeys];
+            for (NSString *key in keys) {
+                NSDictionary *entry = self.recentActorByPath[key];
+                NSTimeInterval ts = [entry[@"timestamp"] respondsToSelector:@selector(doubleValue)] ? [entry[@"timestamp"] doubleValue] : 0;
+                if ((nowTs - ts) > 20.0) {
+                    [self.recentActorByPath removeObjectForKey:key];
+                }
+            }
+        }
+    }
 }
 
 @end

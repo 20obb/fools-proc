@@ -102,7 +102,9 @@
 - (void)appendEventWithType:(NSString *)eventType
                       source:(NSString *)source
                         path:(NSString *)path
-                   timestamp:(NSDate *)timestamp {
+                   timestamp:(NSDate *)timestamp
+                  processName:(NSString *)processName
+                          pid:(int)pid {
     if (path.length == 0) {
         return;
     }
@@ -116,7 +118,14 @@
         trimmedPath = [NSString stringWithFormat:@"...%@", [trimmedPath substringFromIndex:trimmedPath.length - 69]];
     }
 
-    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@ %@", timeString, source ?: @"watcher", displayType ?: @"event", trimmedPath];
+    NSString *proc = processName.length > 0 ? processName : @"unknown";
+    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@ %@ (%@#%d)",
+                      timeString,
+                      source ?: @"watcher",
+                      displayType ?: @"event",
+                      trimmedPath,
+                      proc,
+                      pid];
     NSMutableAttributedString *attributed = [[NSMutableAttributedString alloc] initWithString:line attributes:@{
         NSForegroundColorAttributeName: [UIColor colorWithWhite:0.9 alpha:1.0],
         NSFontAttributeName: [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular]

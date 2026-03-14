@@ -27,9 +27,11 @@ extern char **environ;
 @property (nonatomic, assign) BOOL monitoringRunning;
 @property (nonatomic, assign) BOOL procmonEnabled;
 @property (nonatomic, assign) NSTimeInterval lastDaemonLaunchAttempt;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *pendingHookRequests;
 - (BOOL)writeDataLocked:(NSData *)data;
 - (void)attemptDaemonLaunchLocked;
 - (void)spawnProcessAtPath:(NSString *)path arguments:(NSArray<NSString *> *)arguments;
+- (void)flushPendingHookEventsLocked;
 @end
 
 @implementation PMTweakClient
@@ -61,6 +63,7 @@ extern char **environ;
         _monitoringRunning = NO;
         _procmonEnabled = YES;
         _lastDaemonLaunchAttempt = 0;
+        _pendingHookRequests = [NSMutableArray array];
     }
     return self;
 }
@@ -104,17 +107,15 @@ extern char **environ;
     }
 
     dispatch_async(self.queue, ^{
-        if (!self.connected) {
-            [self connectIfNeeded];
-            return;
-        }
-
         NSMutableDictionary *event = [NSMutableDictionary dictionary];
         event[@"event_type"] = eventType;
         event[@"path"] = path;
         event[@"timestamp"] = @([[NSDate date] timeIntervalSince1970]);
         event[@"pid"] = @(getpid());
-        event[@"process_name"] = @"SpringBoard";
+        NSString *procName = [[NSProcessInfo processInfo] processName] ?: @"unknown";
+        event[@"process_name"] = procName;
+        event[@"uid"] = @(geteuid());
+        event[@"gid"] = @(getegid());
         event[@"source"] = @"hook";
         if (oldPath.length > 0) {
             event[@"old_path"] = oldPath;
@@ -130,6 +131,14 @@ extern char **environ;
             @"command": @"report_hook_event",
             @"event": event
         };
+        if (!self.connected) {
+            if (self.pendingHookRequests.count >= 256) {
+                [self.pendingHookRequests removeObjectAtIndex:0];
+            }
+            [self.pendingHookRequests addObject:request];
+            [self connectIfNeeded];
+            return;
+        }
 
         [self sendCommandLocked:request];
     });
@@ -182,6 +191,7 @@ extern char **environ;
         [self sendCommandLocked:@{ @"command": @"start" }];
     }
     [self sendCommandLocked:@{ @"command": @"status" }];
+    [self flushPendingHookEventsLocked];
 }
 
 - (void)installReadSourceLocked {
@@ -446,6 +456,19 @@ extern char **environ;
     // Fallback: run daemon directly if launchctl actions are blocked in this context.
     if ([[NSFileManager defaultManager] isExecutableFileAtPath:@"/var/jb/usr/libexec/procmond"]) {
         [self spawnProcessAtPath:@"/var/jb/usr/libexec/procmond" arguments:@[]];
+    }
+}
+
+- (void)flushPendingHookEventsLocked {
+    if (!self.connected || self.pendingHookRequests.count == 0) {
+        return;
+    }
+
+    NSArray<NSDictionary *> *pending = [self.pendingHookRequests copy];
+    [self.pendingHookRequests removeAllObjects];
+
+    for (NSDictionary *request in pending) {
+        [self sendCommandLocked:request];
     }
 }
 

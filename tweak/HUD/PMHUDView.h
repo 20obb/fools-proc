@@ -13,7 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)appendEventWithType:(NSString *)eventType
                       source:(NSString *)source
                         path:(NSString *)path
-                   timestamp:(NSDate *)timestamp;
+                   timestamp:(NSDate *)timestamp
+                  processName:(nullable NSString *)processName
+                          pid:(int)pid;
 - (void)clearEvents;
 - (void)setCollapsed:(BOOL)collapsed animated:(BOOL)animated;
 

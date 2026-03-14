@@ -317,10 +317,11 @@
             return;
         }
         NSString *source = [eventDictionary[@"source"] isKindOfClass:[NSString class]] ? eventDictionary[@"source"] : @"src";
+        int pid = [eventDictionary[@"pid"] respondsToSelector:@selector(intValue)] ? [eventDictionary[@"pid"] intValue] : -1;
         NSNumber *timestamp = [eventDictionary[@"timestamp"] isKindOfClass:[NSNumber class]] ? eventDictionary[@"timestamp"] : nil;
         NSDate *date = timestamp ? [NSDate dateWithTimeIntervalSince1970:[timestamp doubleValue]] : [NSDate date];
 
-        [self.hudView appendEventWithType:eventType source:source path:path timestamp:date];
+        [self.hudView appendEventWithType:eventType source:source path:path timestamp:date processName:processName pid:pid];
     });
 }
 

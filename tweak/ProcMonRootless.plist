@@ -1,5 +1,8 @@
 {
     Filter = {
+        Classes = (
+            UIApplication
+        );
         Executables = (
             SpringBoard
         );

@@ -98,8 +98,21 @@ static NSString *eventSummary(NSDictionary *event) {
     NSString *type = [event[@"event_type"] isKindOfClass:[NSString class]] ? event[@"event_type"] : @"evt";
     NSString *path = [event[@"path"] isKindOfClass:[NSString class]] ? event[@"path"] : @"(null)";
     int pid = [event[@"pid"] respondsToSelector:@selector(intValue)] ? [event[@"pid"] intValue] : -1;
+    NSString *proc = [event[@"process_name"] isKindOfClass:[NSString class]] ? event[@"process_name"] : @"unknown";
+    NSString *timeString = @"--:--:--";
+    if ([event[@"timestamp"] respondsToSelector:@selector(doubleValue)]) {
+        NSDate *date = [NSDate dateWithTimeIntervalSince1970:[event[@"timestamp"] doubleValue]];
+        static NSDateFormatter *fmt = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            fmt = [[NSDateFormatter alloc] init];
+            fmt.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+            fmt.dateFormat = @"HH:mm:ss";
+        });
+        timeString = [fmt stringFromDate:date] ?: timeString;
+    }
 
-    NSString *line = [NSString stringWithFormat:@"[%@] %@ %@ pid=%d", source, type, path, pid];
+    NSString *line = [NSString stringWithFormat:@"[%@] [%@] %@ %@ proc=%@ pid=%d", timeString, source, type, path, proc, pid];
     NSString *plistDiff = [event[@"plist_diff_summary"] isKindOfClass:[NSString class]] ? event[@"plist_diff_summary"] : nil;
     if (plistDiff.length > 0) {
         line = [line stringByAppendingFormat:@" plist=%@", plistDiff];
