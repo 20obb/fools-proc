@@ -71,6 +71,7 @@ extern char **environ;
 - (void)start {
     dispatch_async(self.queue, ^{
         self.running = YES;
+        [self attemptDaemonLaunchLocked];
         [self connectIfNeeded];
     });
 }
@@ -89,10 +90,8 @@ extern char **environ;
             [self connectIfNeeded];
             return;
         }
-        PMConfig *config = [PMConfig loadCurrentConfig];
-        if (config.monitorGuard) {
-            [self sendCommandLocked:@{ @"command": @"start" }];
-        }
+        [self sendCommandLocked:@{ @"command": @"subscribe_live" }];
+        [self sendCommandLocked:@{ @"command": @"start" }];
         [self sendCommandLocked:@{ @"command": @"status" }];
     });
 }
@@ -186,10 +185,7 @@ extern char **environ;
     [self notifyStatusChangedLocked];
 
     [self sendCommandLocked:@{ @"command": @"subscribe_live" }];
-    PMConfig *config = [PMConfig loadCurrentConfig];
-    if (config.monitorGuard) {
-        [self sendCommandLocked:@{ @"command": @"start" }];
-    }
+    [self sendCommandLocked:@{ @"command": @"start" }];
     [self sendCommandLocked:@{ @"command": @"status" }];
     [self flushPendingHookEventsLocked];
 }
@@ -302,10 +298,10 @@ extern char **environ;
         if (data) {
             self.monitoringRunning = [data[@"monitoring_running"] respondsToSelector:@selector(boolValue)] ? [data[@"monitoring_running"] boolValue] : NO;
             self.procmonEnabled = [data[@"procmon_enabled"] respondsToSelector:@selector(boolValue)] ? [data[@"procmon_enabled"] boolValue] : YES;
-            PMConfig *config = [PMConfig loadCurrentConfig];
-            if (config.monitorGuard && !self.monitoringRunning) {
+            if (!self.monitoringRunning) {
                 [self sendCommandLocked:@{ @"command": @"start" }];
             }
+            [self sendCommandLocked:@{ @"command": @"subscribe_live" }];
             [self notifyStatusChangedLocked];
         }
     }
@@ -364,13 +360,8 @@ extern char **environ;
         return;
     }
 
-    PMConfig *config = [PMConfig loadCurrentConfig];
-    if (!config.autoReconnectLive) {
-        return;
-    }
-
     NSTimeInterval delay = self.reconnectDelay;
-    self.reconnectDelay = MIN(self.reconnectDelay * 1.8, 30.0);
+    self.reconnectDelay = MIN(self.reconnectDelay * 1.8, 8.0);
 
     self.reconnectTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
     dispatch_source_set_timer(self.reconnectTimer,
@@ -435,7 +426,6 @@ extern char **environ;
     self.lastDaemonLaunchAttempt = now;
 
     [PMConfig ensureRuntimeDirectories];
-    unlink([PMConfig socketPath].fileSystemRepresentation);
 
     NSString *label = @"system/com.procmonrootless.procmond";
     NSString *plistPath = @"/var/jb/Library/LaunchDaemons/com.procmonrootless.procmond.plist";
@@ -453,8 +443,9 @@ extern char **environ;
         [self spawnProcessAtPath:launchctlPath arguments:@[@"kickstart", @"-k", label]];
     }
 
-    // Fallback: run daemon directly if launchctl actions are blocked in this context.
-    if ([[NSFileManager defaultManager] isExecutableFileAtPath:@"/var/jb/usr/libexec/procmond"]) {
+    // Safety fallback only for privileged contexts; avoid spawning a mobile-owned
+    // daemon that can look "connected" but provide incomplete monitoring.
+    if (geteuid() == 0 && [[NSFileManager defaultManager] isExecutableFileAtPath:@"/var/jb/usr/libexec/procmond"]) {
         [self spawnProcessAtPath:@"/var/jb/usr/libexec/procmond" arguments:@[]];
     }
 }

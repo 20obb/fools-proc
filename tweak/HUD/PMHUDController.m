@@ -17,6 +17,7 @@
 @property (nonatomic, assign) BOOL monitoringRunning;
 @property (nonatomic, assign) BOOL daemonConnected;
 @property (nonatomic, assign) int notifyToken;
+@property (nonatomic, assign) int forceShowNotifyToken;
 @property (nonatomic, strong) PMConfig *activeConfig;
 @end
 
@@ -45,6 +46,7 @@
         _monitoringRunning = NO;
         _daemonConnected = NO;
         _notifyToken = 0;
+        _forceShowNotifyToken = 0;
     }
     return self;
 }
@@ -87,6 +89,10 @@
         notify_cancel(self.notifyToken);
         self.notifyToken = 0;
     }
+    if (self.forceShowNotifyToken != 0) {
+        notify_cancel(self.forceShowNotifyToken);
+        self.forceShowNotifyToken = 0;
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         self.window.hidden = YES;
@@ -119,6 +125,16 @@
     });
 
     self.notifyToken = token;
+
+    int forceToken = 0;
+    notify_register_dispatch("com.procmonrootless.hud/ForceShow", &forceToken, dispatch_get_main_queue(), ^(int _token) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        [strongSelf forceShowHUD];
+    });
+    self.forceShowNotifyToken = forceToken;
 }
 
 - (void)configureClientCallbacks {
@@ -269,6 +285,23 @@
     self.window.frame = frame;
 
     [gesture setTranslation:CGPointZero inView:self.window.superview];
+}
+
+- (void)forceShowHUD {
+    NSMutableDictionary *prefs = [NSMutableDictionary dictionaryWithContentsOfFile:[PMConfig preferencesFilePath]];
+    if (![prefs isKindOfClass:[NSMutableDictionary class]]) {
+        prefs = [NSMutableDictionary dictionary];
+    }
+    prefs[@"Enabled"] = @YES;
+    prefs[@"HUDEnabled"] = @YES;
+    prefs[@"HUDHidden"] = @NO;
+    [prefs writeToFile:[PMConfig preferencesFilePath] atomically:YES];
+
+    self.procmonEnabled = YES;
+    self.monitoringRunning = YES;
+    [self ensureHUDVisible];
+    [self refreshHUDStatus];
+    [[PMTweakClient sharedInstance] requestStatus];
 }
 
 - (void)resizeWindowForCollapsedState:(BOOL)collapsed animated:(BOOL)animated {

@@ -15,7 +15,9 @@
 @property (nonatomic, strong) PMIPCServer *ipcServer;
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong) dispatch_source_t configTimer;
+@property (nonatomic, strong) dispatch_source_t healthTimer;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *recentActorByPath;
+@property (nonatomic, assign) NSUInteger zeroWatcherHealthHits;
 - (BOOL)shouldAcceptEvent:(PMEvent *)event;
 - (void)applyAttributionToEvent:(PMEvent *)event;
 @end
@@ -27,6 +29,7 @@
     self.config = [PMConfig loadCurrentConfig];
     [PMConfig ensureRuntimeDirectories];
     self.recentActorByPath = [NSMutableDictionary dictionary];
+    self.zeroWatcherHealthHits = 0;
 
     self.eventStore = [[PMEventStore alloc] initWithConfig:self.config];
     self.monitor = [[PMMonitor alloc] initWithConfig:self.config];
@@ -62,6 +65,7 @@
     [self.monitor start];
 
     [self installConfigTimer];
+    [self installHealthTimer];
 
     PMEvent *startup = [PMEvent eventWithType:@"SERVICE_STARTED" path:@"/var/jb/usr/libexec/procmond"];
     startup.source = @"daemon";
@@ -87,6 +91,10 @@
         dispatch_source_cancel(self.configTimer);
         self.configTimer = nil;
     }
+    if (self.healthTimer) {
+        dispatch_source_cancel(self.healthTimer);
+        self.healthTimer = nil;
+    }
     [self.monitor stop];
     [self.ipcServer stop];
 }
@@ -108,6 +116,62 @@
     });
 
     dispatch_resume(self.configTimer);
+}
+
+- (void)installHealthTimer {
+    self.healthTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
+    dispatch_source_set_timer(self.healthTimer,
+                              dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                              3 * NSEC_PER_SEC,
+                              1 * NSEC_PER_SEC);
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_source_set_event_handler(self.healthTimer, ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+
+        if (![strongSelf.monitor isRunning]) {
+            [strongSelf.monitor start];
+        }
+
+        NSDictionary *monitorStatus = [strongSelf.monitor statusSnapshot];
+        BOOL monitorRunning = [monitorStatus[@"running"] respondsToSelector:@selector(boolValue)] ? [monitorStatus[@"running"] boolValue] : [strongSelf.monitor isRunning];
+        NSUInteger watcherCount = [monitorStatus[@"watcher_count"] respondsToSelector:@selector(unsignedIntegerValue)] ? [monitorStatus[@"watcher_count"] unsignedIntegerValue] : 0;
+        if (monitorRunning && watcherCount == 0) {
+            strongSelf.zeroWatcherHealthHits += 1;
+            if (strongSelf.zeroWatcherHealthHits >= 3) {
+                [strongSelf.monitor stop];
+                [strongSelf.monitor start];
+                strongSelf.zeroWatcherHealthHits = 0;
+
+                PMEvent *recover = [PMEvent eventWithType:@"SERVICE_STARTED" path:@"/var/jb/usr/libexec/procmond"];
+                recover.source = @"daemon";
+                recover.pid = getpid();
+                recover.processName = @"procmond";
+                recover.extraMetadata = @{
+                    @"service_name": @"procmond",
+                    @"reason": @"monitor_recovered_zero_watchers"
+                };
+                [strongSelf.eventStore appendEvent:recover];
+                [strongSelf.ipcServer broadcastEvent:recover];
+            }
+        } else {
+            strongSelf.zeroWatcherHealthHits = 0;
+        }
+
+        NSString *socketPath = [PMConfig socketPath];
+        BOOL socketExists = [[NSFileManager defaultManager] fileExistsAtPath:socketPath];
+        if (!socketExists) {
+            [strongSelf.ipcServer stop];
+            NSError *startError = nil;
+            [strongSelf.ipcServer start:&startError];
+            (void)startError;
+        }
+    });
+
+    dispatch_resume(self.healthTimer);
 }
 
 - (void)reloadConfigAndApply {

@@ -340,11 +340,15 @@ extern char **environ;
         prefs = [NSMutableDictionary dictionary];
     }
 
+    prefs[@"Enabled"] = @YES;
+    prefs[@"HUDEnabled"] = @YES;
     prefs[@"HUDHidden"] = @NO;
     [prefs writeToFile:[PMConfig preferencesFilePath] atomically:YES];
     notify_post("com.procmonrootless.settings/ReloadPrefs");
+    notify_post("com.procmonrootless.hud/ForceShow");
+    [self sendCommand:@{ @"command": @"start" } timeout:1.0];
 
-    [self showAlertWithTitle:@"ProcMon Rootless" message:@"HUD restored."];
+    [self showAlertWithTitle:@"ProcMon Rootless" message:@"HUD restored and monitor start requested."];
 }
 
 - (void)runShellCommand:(NSString *)command {
