@@ -15,7 +15,6 @@
 @property (nonatomic, strong) PMIPCServer *ipcServer;
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong) dispatch_source_t configTimer;
-@property (nonatomic, assign) BOOL pausedByCommand;
 @end
 
 @implementation PMDaemon
@@ -52,9 +51,7 @@
         return NO;
     }
 
-    if (self.config.enabled) {
-        [self.monitor start];
-    }
+    [self.monitor start];
 
     [self installConfigTimer];
 
@@ -64,6 +61,7 @@
     startup.processName = @"procmond";
     startup.extraMetadata = @{ @"service_name": @"procmond", @"monitor_started": @([self.monitor isRunning]) };
     [self.eventStore appendEvent:startup];
+    [self.ipcServer broadcastEvent:startup];
 
     return YES;
 }
@@ -111,12 +109,8 @@
     [self.eventStore reloadConfig:newConfig];
     [self.monitor reloadConfig:newConfig];
 
-    if (!newConfig.enabled) {
-        [self.monitor stop];
-        return;
-    }
-
-    if (!self.pausedByCommand && ![self.monitor isRunning]) {
+    // Stability-first: keep monitor running continuously.
+    if (![self.monitor isRunning]) {
         [self.monitor start];
     }
 }
@@ -132,19 +126,21 @@
     }
 
     if ([command isEqualToString:@"start"]) {
-        if (!self.config.enabled) {
-            return [PMIPCProtocol errorResponseForCommand:command code:@"disabled" message:@"ProcMon is disabled in Settings"];
-        }
-
-        self.pausedByCommand = NO;
         [self.monitor start];
-        return [PMIPCProtocol okResponseForCommand:command payload:@{ @"monitoring_running": @YES }];
+        return [PMIPCProtocol okResponseForCommand:command payload:@{
+            @"monitoring_running": @([self.monitor isRunning]),
+            @"always_on": @YES
+        }];
     }
 
     if ([command isEqualToString:@"stop"]) {
-        self.pausedByCommand = YES;
-        [self.monitor stop];
-        return [PMIPCProtocol okResponseForCommand:command payload:@{ @"monitoring_running": @NO }];
+        // Keep monitor alive even if stop is requested.
+        [self.monitor start];
+        return [PMIPCProtocol okResponseForCommand:command payload:@{
+            @"monitoring_running": @([self.monitor isRunning]),
+            @"always_on": @YES,
+            @"note": @"monitor is pinned to running"
+        }];
     }
 
     if ([command isEqualToString:@"recent"]) {
@@ -222,7 +218,8 @@
         @"hud_enabled": @(self.config.hudEnabled),
         @"plist_parsing": @(self.config.plistParsingEnabled),
         @"monitoring_running": @([self.monitor isRunning]),
-        @"paused_by_command": @(self.pausedByCommand),
+        @"paused_by_command": @NO,
+        @"always_on": @YES,
         @"watcher_count": monitorStatus[@"watcher_count"] ?: @0,
         @"storm_dropped": monitorStatus[@"storm_dropped"] ?: @0,
         @"recent_count": @([self.eventStore recentCount]),

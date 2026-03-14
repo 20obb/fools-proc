@@ -184,6 +184,9 @@
     if ([type containsString:@"create"] || [type containsString:@"mkdir"]) {
         return [UIColor colorWithRed:0.32 green:0.9 blue:0.4 alpha:1.0];
     }
+    if ([type containsString:@"link_created"] || [type containsString:@"symlink"] || [type containsString:@"hardlink"]) {
+        return [UIColor colorWithRed:0.32 green:0.9 blue:0.4 alpha:1.0];
+    }
     if ([type containsString:@"delete"] || [type containsString:@"remove"]) {
         return [UIColor colorWithRed:0.95 green:0.38 blue:0.38 alpha:1.0];
     }

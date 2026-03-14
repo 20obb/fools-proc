@@ -11,6 +11,7 @@
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) PMHUDView *hudView;
 @property (nonatomic, strong) NSTimer *statusTimer;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDate *> *recentHUDKeys;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL procmonEnabled;
 @property (nonatomic, assign) BOOL monitoringRunning;
@@ -38,6 +39,7 @@
     self = [super init];
     if (self) {
         _started = NO;
+        _recentHUDKeys = [NSMutableDictionary dictionary];
         _procmonEnabled = YES;
         _monitoringRunning = NO;
         _daemonConnected = NO;
@@ -308,6 +310,9 @@
         if (![self shouldDisplayEventType:eventType path:path]) {
             return;
         }
+        if ([self shouldThrottleHUDLineForEventType:eventType path:path]) {
+            return;
+        }
         NSString *source = [eventDictionary[@"source"] isKindOfClass:[NSString class]] ? eventDictionary[@"source"] : @"src";
         NSNumber *timestamp = [eventDictionary[@"timestamp"] isKindOfClass:[NSNumber class]] ? eventDictionary[@"timestamp"] : nil;
         NSDate *date = timestamp ? [NSDate dateWithTimeIntervalSince1970:[timestamp doubleValue]] : [NSDate date];
@@ -333,25 +338,31 @@
         return NO;
     }
 
-    static NSSet<NSString *> *primaryEvents = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        primaryEvents = [NSSet setWithArray:@[
-            @"CREATE_FILE",
-            @"CREATE_DIR",
-            @"DELETE",
-            @"RENAME_MOVE",
-            @"MODIFY_CONTENT",
-            @"PLIST_VALUE_CHANGED",
-            @"PERMISSION_CHANGED",
-            @"SERVICE_STARTED",
-            @"SERVICE_STOPPED",
-            @"PACKAGE_INSTALL",
-            @"PACKAGE_REMOVE"
-        ]];
-    });
+    NSString *upperType = [eventType uppercaseString];
+    if ([upperType containsString:@"OPEN"] || [upperType containsString:@"READ"] || [upperType containsString:@"ACCESS"] || [upperType containsString:@"CLOSE"]) {
+        return NO;
+    }
+    if ([upperType isEqualToString:@"UNKNOWN"]) {
+        return NO;
+    }
 
-    return [primaryEvents containsObject:eventType];
+    return YES;
+}
+
+- (BOOL)shouldThrottleHUDLineForEventType:(NSString *)eventType path:(NSString *)path {
+    NSString *key = [NSString stringWithFormat:@"%@|%@", eventType ?: @"", path ?: @""];
+    NSDate *now = [NSDate date];
+    NSDate *previous = self.recentHUDKeys[key];
+    self.recentHUDKeys[key] = now;
+
+    if (self.recentHUDKeys.count > 200) {
+        [self.recentHUDKeys removeAllObjects];
+    }
+
+    if (previous && [now timeIntervalSinceDate:previous] < 0.6) {
+        return YES;
+    }
+    return NO;
 }
 
 @end

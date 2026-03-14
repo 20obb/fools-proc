@@ -86,6 +86,8 @@ extern char **environ;
             [self connectIfNeeded];
             return;
         }
+        // Force monitor to stay active, then fetch current status.
+        [self sendCommandLocked:@{ @"command": @"start" }];
         [self sendCommandLocked:@{ @"command": @"status" }];
     });
 }
@@ -173,6 +175,7 @@ extern char **environ;
     [self notifyStatusChangedLocked];
 
     [self sendCommandLocked:@{ @"command": @"subscribe_live" }];
+    [self sendCommandLocked:@{ @"command": @"start" }];
     [self sendCommandLocked:@{ @"command": @"status" }];
 }
 

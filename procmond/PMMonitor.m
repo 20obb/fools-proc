@@ -249,7 +249,7 @@
         return nil;
     }
 
-    if ([PMConfig isNoisyPathForDisplay:path] && [eventType isEqualToString:@"MODIFY_CONTENT"]) {
+    if ([self shouldSuppressEventType:eventType path:path]) {
         return nil;
     }
 
@@ -308,7 +308,7 @@
         return @"PERMISSION_CHANGED";
     }
     if (flags & NOTE_LINK) {
-        return @"HARDLINK_CREATED";
+        return @"CREATE_FILE";
     }
     if (flags & NOTE_REVOKE) {
         return @"ATTRIB_CHANGED";
@@ -553,6 +553,21 @@
     return [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] && isDir;
 }
 
+- (NSNumber *)fileKindForPath:(NSString *)path {
+    struct stat st;
+    if (lstat(path.fileSystemRepresentation, &st) != 0) {
+        return nil;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        return @(1); // directory
+    }
+    if (S_ISLNK(st.st_mode)) {
+        return @(2); // symlink
+    }
+    return @(0); // regular/other file
+}
+
 - (BOOL)shouldWatchFilePath:(NSString *)path {
     if (path.length == 0 || [self.config shouldIgnorePath:path]) {
         return NO;
@@ -572,6 +587,31 @@
         return YES;
     }
     return NO;
+}
+
+- (BOOL)shouldSuppressEventType:(NSString *)eventType path:(NSString *)path {
+    if (eventType.length == 0 || path.length == 0) {
+        return YES;
+    }
+
+    if (![PMConfig isNoisyPathForDisplay:path]) {
+        return NO;
+    }
+
+    static NSSet<NSString *> *allowOnNoisyPaths = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowOnNoisyPaths = [NSSet setWithArray:@[
+            @"PACKAGE_INSTALL",
+            @"PACKAGE_REMOVE",
+            @"SERVICE_STARTED",
+            @"SERVICE_STOPPED",
+            @"PLIST_VALUE_CHANGED",
+            @"PLIST_FILE_REWRITTEN"
+        ]];
+    });
+
+    return ![allowOnNoisyPaths containsObject:eventType];
 }
 
 - (BOOL)shouldCoalesceModifyEventForPath:(NSString *)path {
@@ -608,9 +648,9 @@
         if ([self.config shouldIgnorePath:childPath]) {
             continue;
         }
-        BOOL isDir = NO;
-        if ([fileManager fileExistsAtPath:childPath isDirectory:&isDir]) {
-            snapshot[child] = @(isDir);
+        NSNumber *kind = [self fileKindForPath:childPath];
+        if (kind != nil) {
+            snapshot[child] = kind;
             count += 1;
         }
     }
@@ -650,8 +690,12 @@
 
     for (NSString *name in added) {
         NSString *childPath = [directoryPath stringByAppendingPathComponent:name];
-        BOOL isDir = [current[name] boolValue];
-        [self emitSyntheticEventType:(isDir ? @"CREATE_DIR" : @"CREATE_FILE") path:childPath oldPath:nil newPath:nil];
+        NSInteger kind = [current[name] integerValue];
+        NSString *createType = @"CREATE_FILE";
+        if (kind == 1) {
+            createType = @"CREATE_DIR";
+        }
+        [self emitSyntheticEventType:createType path:childPath oldPath:nil newPath:nil];
     }
 
     for (NSString *name in removed) {
@@ -664,8 +708,7 @@
     if (eventType.length == 0 || path.length == 0 || [self.config shouldIgnorePath:path]) {
         return;
     }
-    if ([PMConfig isNoisyPathForDisplay:path] &&
-        ([eventType isEqualToString:@"MODIFY_CONTENT"] || [eventType isEqualToString:@"ATTRIB_CHANGED"])) {
+    if ([self shouldSuppressEventType:eventType path:path]) {
         return;
     }
 
